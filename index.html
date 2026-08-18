@@ -1,0 +1,2272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Glycemic Food Comparison (Mobile)</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0f10; }
+  #root { padding: 0; box-sizing: border-box; min-height: 100vh; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  input, button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useEffect, useRef, useState, useMemo } = React;
+
+
+// ---------------------------------------------------------------------------
+// Data notes:
+// gi                  glycemic index (0-100, glucose=100), portion-independent
+// carbs100            grams of AVAILABLE carbohydrate (starch+sugar, excl. fiber) per 100g
+// sugar100            grams of sugar per 100g (subset of carbs100)
+// fiber100            grams of total fiber per 100g (soluble100 + insoluble100)
+// soluble100/insoluble100  fiber subtypes per 100g
+// protein100, fat100  grams per 100g
+// satFat100           grams of saturated fat per 100g
+// mono100/poly100     grams of mono/polyunsaturated fat per 100g (mono100+poly100 = unsaturated fat)
+// sodium100/potassium100/calcium100/iron100 (mg per 100g), vitC100 (mg per 100g)
+// fdaG                typical FDA-style reference serving, in grams (or ml for drinks)
+// ttp                 estimated time-to-peak blood glucose response, minutes
+// All values are illustrative approximations from published GI tables and
+// typical nutrition-label data (including composite/mixed dishes, which don't
+// have a single lab-tested GI — those are the roughest estimates here).
+// Micronutrients are category-level approximations with overrides for a few
+// well-known standouts, not per-product lab values.
+// ---------------------------------------------------------------------------
+const CATEGORIES = {
+  grain: { label: "Grains", labelFa: "غلات" },
+  fruit: { label: "Fruits", labelFa: "میوه‌ها" },
+  legume: { label: "Legumes", labelFa: "حبوبات" },
+  veg: { label: "Vegetables", labelFa: "سبزیجات" },
+  fat: { label: "Dairy, fats, nuts & seeds", labelFa: "لبنیات، چربی، آجیل و دانه‌ها" },
+  sweet: { label: "Sugars / sweets", labelFa: "شیرینی و قند" },
+  drink: { label: "Beverages", labelFa: "نوشیدنی‌ها" },
+  protein: { label: "Meat, fish & eggs", labelFa: "گوشت، ماهی و تخم‌مرغ" },
+};
+
+const LIQUID_IDS = ["oj", "apple-juice", "soda", "sports-drink", "milk", "doogh", "almond-milk", "soy-milk", "coconut-milk", "oat-milk", "rice-milk"];
+
+const RAW_FOODS = [
+  // Grains
+  { id: "white-bread", name: "White bread", nameFa: "نان سفید", cat: "grain", sodium100: 490, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 75, carbs100: 49, sugar100: 5, fiber100: 2.7, soluble100: 0.81, insoluble100: 1.89, protein100: 9, fat100: 3.2, satFat100: 0.7, mono100: 1.38, poly100: 1.12, fdaG: 50, fdaLabel: "50g · ~2 slices", fdaLabelFa: "۵۰ گرم · ~۲ برش", ttp: 30 },
+  { id: "wheat-bread", name: "Whole wheat bread", nameFa: "نان گندم کامل", cat: "grain", sodium100: 430, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 74, carbs100: 41, sugar100: 5, fiber100: 7, soluble100: 2.1, insoluble100: 4.9, protein100: 13, fat100: 3.5, satFat100: 0.7, mono100: 1.54, poly100: 1.26, fdaG: 50, fdaLabel: "50g · ~2 slices", fdaLabelFa: "۵۰ گرم · ~۲ برش", ttp: 40 },
+  { id: "sourdough", name: "Sourdough bread", nameFa: "نان ترش", cat: "grain", sodium100: 460, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 53, carbs100: 46, sugar100: 2, fiber100: 2.4, soluble100: 0.72, insoluble100: 1.68, protein100: 8, fat100: 1, satFat100: 0.2, mono100: 0.44, poly100: 0.36, fdaG: 50, fdaLabel: "50g · 1 slice", fdaLabelFa: "۵۰ گرم · ۱ برش", ttp: 40 },
+  { id: "bagel", name: "Bagel", nameFa: "بیگل", cat: "grain", sodium100: 430, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 69, carbs100: 54, sugar100: 5, fiber100: 2, soluble100: 0.6, insoluble100: 1.4, protein100: 10, fat100: 1.7, satFat100: 0.3, mono100: 0.77, poly100: 0.63, fdaG: 70, fdaLabel: "70g · 1 mini bagel", fdaLabelFa: "۷۰ گرم · ۱ بیگل کوچک", ttp: 45 },
+  { id: "white-rice", name: "White rice", nameFa: "برنج سفید", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 73, carbs100: 28, sugar100: 0.1, fiber100: 0.4, soluble100: 0.12, insoluble100: 0.28, protein100: 2.7, fat100: 0.3, satFat100: 0.1, mono100: 0.11, poly100: 0.09, fdaG: 150, fdaLabel: "150g · ~1 cup cooked", fdaLabelFa: "۱۵۰ گرم · ~۱ لیوان پخته", ttp: 60 },
+  { id: "brown-rice", name: "Brown rice", nameFa: "برنج قهوه‌ای", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 68, carbs100: 23, sugar100: 0.4, fiber100: 1.8, soluble100: 0.54, insoluble100: 1.26, protein100: 2.6, fat100: 0.9, satFat100: 0.2, mono100: 0.39, poly100: 0.31, fdaG: 150, fdaLabel: "150g · ~1 cup cooked", fdaLabelFa: "۱۵۰ گرم · ~۱ لیوان پخته", ttp: 70 },
+  { id: "barley", name: "Barley", nameFa: "جو", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 28, carbs100: 23, sugar100: 0.8, fiber100: 3.8, soluble100: 1.9, insoluble100: 1.9, protein100: 3.5, fat100: 0.4, satFat100: 0.1, mono100: 0.17, poly100: 0.13, fdaG: 150, fdaLabel: "150g · ~1 cup cooked", fdaLabelFa: "۱۵۰ گرم · ~۱ لیوان پخته", ttp: 90 },
+  { id: "oats", name: "Oats (porridge)", nameFa: "جو دوسر", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 55, carbs100: 12, sugar100: 0.3, fiber100: 1.7, soluble100: 0.94, insoluble100: 0.76, protein100: 2.5, fat100: 1.5, satFat100: 0.3, mono100: 0.66, poly100: 0.54, fdaG: 250, fdaLabel: "250g · 1 bowl", fdaLabelFa: "۲۵۰ گرم · ۱ کاسه", ttp: 60 },
+  { id: "pasta", name: "Pasta", nameFa: "پاستا", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 49, carbs100: 25, sugar100: 0.6, fiber100: 1.3, soluble100: 0.39, insoluble100: 0.91, protein100: 5, fat100: 0.9, satFat100: 0.2, mono100: 0.39, poly100: 0.31, fdaG: 140, fdaLabel: "140g · ~1.5 cups cooked", fdaLabelFa: "۱۴۰ گرم · ~۱.۵ لیوان پخته", ttp: 50 },
+  { id: "quinoa", name: "Quinoa", nameFa: "کینوا", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 53, carbs100: 21, sugar100: 0.9, fiber100: 2.8, soluble100: 0.84, insoluble100: 1.96, protein100: 4.4, fat100: 1.9, satFat100: 0.2, mono100: 0.94, poly100: 0.76, fdaG: 185, fdaLabel: "185g · 1 cup cooked", fdaLabelFa: "۱۸۵ گرم · ۱ لیوان پخته", ttp: 60 },
+  { id: "cornflakes", name: "Corn flakes", nameFa: "کورن‌فلکس", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 81, carbs100: 84, sugar100: 8, fiber100: 3, soluble100: 0.9, insoluble100: 2.1, protein100: 7, fat100: 0.4, satFat100: 0.1, mono100: 0.17, poly100: 0.13, fdaG: 30, fdaLabel: "30g · 1 bowl", fdaLabelFa: "۳۰ گرم · ۱ کاسه", ttp: 30 },
+  { id: "couscous", name: "Couscous", nameFa: "کوسکوس", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 65, carbs100: 23, sugar100: 0.1, fiber100: 1.4, soluble100: 0.42, insoluble100: 0.98, protein100: 3.8, fat100: 0.2, satFat100: 0, mono100: 0.11, poly100: 0.09, fdaG: 150, fdaLabel: "150g · 1 cup cooked", fdaLabelFa: "۱۵۰ گرم · ۱ لیوان پخته", ttp: 50 },
+  { id: "buckwheat", name: "Buckwheat", nameFa: "گندم سیاه", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 54, carbs100: 20, sugar100: 0.9, fiber100: 2.7, soluble100: 0.81, insoluble100: 1.89, protein100: 3.4, fat100: 0.6, satFat100: 0.1, mono100: 0.28, poly100: 0.22, fdaG: 150, fdaLabel: "150g · 1 cup cooked", fdaLabelFa: "۱۵۰ گرم · ۱ لیوان پخته", ttp: 65 },
+  { id: "corn-tortilla", name: "Corn tortilla", nameFa: "تورتیلای ذرت", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 46, carbs100: 44, sugar100: 1.2, fiber100: 4.9, soluble100: 1.47, insoluble100: 3.43, protein100: 5.7, fat100: 2.9, satFat100: 0.4, mono100: 1.38, poly100: 1.12, fdaG: 30, fdaLabel: "30g · 1 tortilla", fdaLabelFa: "۳۰ گرم · ۱ تورتیلا", ttp: 45 },
+  { id: "flour-tortilla", name: "Flour tortilla", nameFa: "تورتیلای آرد", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 55, carbs100: 50, sugar100: 1.7, fiber100: 2.4, soluble100: 0.72, insoluble100: 1.68, protein100: 7.9, fat100: 7.5, satFat100: 1.9, mono100: 3.08, poly100: 2.52, fdaG: 45, fdaLabel: "45g · 1 tortilla", fdaLabelFa: "۴۵ گرم · ۱ تورتیلا", ttp: 40 },
+  // Fruits
+  { id: "banana", name: "Banana", nameFa: "موز", cat: "fruit", sodium100: 2, potassium100: 358, calcium100: 15, iron100: 0.3, vitC100: 25, magnesium100: 27, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 51, carbs100: 23, sugar100: 12, fiber100: 2.6, soluble100: 1.04, insoluble100: 1.56, protein100: 1.1, fat100: 0.3, satFat100: 0.1, mono100: 0.11, poly100: 0.09, fdaG: 126, fdaLabel: "126g · 1 medium", fdaLabelFa: "۱۲۶ گرم · ۱ عدد متوسط", ttp: 40 },
+  { id: "apple", name: "Apple", nameFa: "سیب", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 25, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 36, carbs100: 14, sugar100: 10, fiber100: 2.4, soluble100: 0.96, insoluble100: 1.44, protein100: 0.3, fat100: 0.2, satFat100: 0, mono100: 0.11, poly100: 0.09, fdaG: 154, fdaLabel: "154g · 1 medium", fdaLabelFa: "۱۵۴ گرم · ۱ عدد متوسط", ttp: 45 },
+  { id: "watermelon", name: "Watermelon", nameFa: "هندوانه", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 8, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 76, carbs100: 8, sugar100: 6, fiber100: 0.4, soluble100: 0.16, insoluble100: 0.24, protein100: 0.6, fat100: 0.2, satFat100: 0, mono100: 0.11, poly100: 0.09, fdaG: 280, fdaLabel: "280g · 2 cups diced", fdaLabelFa: "۲۸۰ گرم · ۲ لیوان خرد شده", ttp: 30 },
+  { id: "dates", name: "Dates", nameFa: "خرما", cat: "fruit", sodium100: 2, potassium100: 696, calcium100: 15, iron100: 0.9, vitC100: 25, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 42, carbs100: 75, sugar100: 63, fiber100: 8, soluble100: 3.2, insoluble100: 4.8, protein100: 2.5, fat100: 0.4, satFat100: 0.1, mono100: 0.17, poly100: 0.13, fdaG: 40, fdaLabel: "40g · 3-4 dates", fdaLabelFa: "۴۰ گرم · ۳ تا ۴ عدد", ttp: 45 },
+  { id: "grapes", name: "Grapes", nameFa: "انگور", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 25, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 59, carbs100: 18, sugar100: 16, fiber100: 0.9, soluble100: 0.36, insoluble100: 0.54, protein100: 0.7, fat100: 0.2, satFat100: 0, mono100: 0.11, poly100: 0.09, fdaG: 126, fdaLabel: "126g · 1 cup", fdaLabelFa: "۱۲۶ گرم · ۱ لیوان", ttp: 40 },
+  { id: "mango", name: "Mango", nameFa: "انبه", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 36, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 51, carbs100: 15, sugar100: 14, fiber100: 1.6, soluble100: 0.64, insoluble100: 0.96, protein100: 0.8, fat100: 0.4, satFat100: 0.1, mono100: 0.17, poly100: 0.13, fdaG: 165, fdaLabel: "165g · 1 cup sliced", fdaLabelFa: "۱۶۵ گرم · ۱ لیوان برش", ttp: 45 },
+  { id: "pineapple", name: "Pineapple", nameFa: "آناناس", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 48, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 66, carbs100: 13, sugar100: 10, fiber100: 1.4, soluble100: 0.56, insoluble100: 0.84, protein100: 0.5, fat100: 0.1, satFat100: 0, mono100: 0.06, poly100: 0.04, fdaG: 165, fdaLabel: "165g · 1 cup", fdaLabelFa: "۱۶۵ گرم · ۱ لیوان", ttp: 40 },
+  { id: "orange", name: "Orange", nameFa: "پرتقال", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 53, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 43, carbs100: 12, sugar100: 9, fiber100: 2.4, soluble100: 0.96, insoluble100: 1.44, protein100: 0.9, fat100: 0.1, satFat100: 0, mono100: 0.06, poly100: 0.04, fdaG: 154, fdaLabel: "154g · 1 medium", fdaLabelFa: "۱۵۴ گرم · ۱ عدد متوسط", ttp: 45 },
+  { id: "strawberries", name: "Strawberries", nameFa: "توت‌فرنگی", cat: "fruit", sodium100: 2, potassium100: 200, calcium100: 15, iron100: 0.3, vitC100: 59, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 41, carbs100: 8, sugar100: 4.9, fiber100: 2, soluble100: 0.8, insoluble100: 1.2, protein100: 0.7, fat100: 0.3, satFat100: 0, mono100: 0.17, poly100: 0.13, fdaG: 152, fdaLabel: "152g · 1 cup", fdaLabelFa: "۱۵۲ گرم · ۱ لیوان", ttp: 40 },
+  // Legumes
+  { id: "hummus", name: "Hummus", nameFa: "حمص", cat: "legume", sodium100: 5, potassium100: 350, calcium100: 50, iron100: 2.5, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 150, gi: 6, carbs100: 14, sugar100: 0.3, fiber100: 6, soluble100: 2.1, insoluble100: 3.9, protein100: 8, fat100: 9.6, satFat100: 1.4, mono100: 4.51, poly100: 3.69, fdaG: 30, fdaLabel: "30g · 2 tbsp", fdaLabelFa: "۳۰ گرم · ۲ قاشق غذاخوری", ttp: 90 },
+  { id: "lentil-soup", name: "Lentil soup", nameFa: "سوپ عدس", cat: "legume", sodium100: 5, potassium100: 180, calcium100: 50, iron100: 1.5, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 180, gi: 30, carbs100: 8, sugar100: 1, fiber100: 2, soluble100: 0.7, insoluble100: 1.3, protein100: 5, fat100: 1.5, satFat100: 0.3, mono100: 0.66, poly100: 0.54, fdaG: 245, fdaLabel: "245g · 1 bowl", fdaLabelFa: "۲۴۵ گرم · ۱ کاسه", ttp: 90 },
+  { id: "chickpeas", name: "Chickpeas", nameFa: "نخود", cat: "legume", sodium100: 5, potassium100: 291, calcium100: 50, iron100: 2.9, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 172, gi: 28, carbs100: 27, sugar100: 4.8, fiber100: 7.6, soluble100: 2.66, insoluble100: 4.94, protein100: 9, fat100: 2.6, satFat100: 0.3, mono100: 1.26, poly100: 1.04, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 100 },
+  { id: "black-beans", name: "Black beans", nameFa: "لوبیا سیاه", cat: "legume", sodium100: 5, potassium100: 355, calcium100: 50, iron100: 2.1, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 149, gi: 30, carbs100: 24, sugar100: 0.3, fiber100: 8.7, soluble100: 3.04, insoluble100: 5.66, protein100: 9, fat100: 0.5, satFat100: 0.1, mono100: 0.22, poly100: 0.18, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 95 },
+  { id: "kidney-beans", name: "Kidney beans", nameFa: "لوبیا قرمز", cat: "legume", sodium100: 5, potassium100: 403, calcium100: 50, iron100: 2.2, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 130, gi: 29, carbs100: 23, sugar100: 0.3, fiber100: 6.4, soluble100: 2.24, insoluble100: 4.16, protein100: 8.7, fat100: 0.5, satFat100: 0.1, mono100: 0.22, poly100: 0.18, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 95 },
+  { id: "edamame", name: "Edamame", nameFa: "ادامامه", cat: "legume", sodium100: 5, potassium100: 350, calcium100: 50, iron100: 2.5, vitC100: 2, magnesium100: 64, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 311, gi: 18, carbs100: 11, sugar100: 2.2, fiber100: 5.2, soluble100: 1.56, insoluble100: 3.64, protein100: 11, fat100: 5, satFat100: 0.6, mono100: 2.42, poly100: 1.98, fdaG: 85, fdaLabel: "85g · 1/2 cup", fdaLabelFa: "۸۵ گرم · نصف لیوان", ttp: 80 },
+  // Starchy vegetables
+  { id: "potato", name: "Boiled potato", nameFa: "سیب‌زمینی آب‌پز", cat: "veg", sodium100: 40, potassium100: 300, calcium100: 40, iron100: 0.8, vitC100: 20, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 78, carbs100: 17, sugar100: 0.8, fiber100: 2.2, soluble100: 0.77, insoluble100: 1.43, protein100: 2, fat100: 0.1, satFat100: 0, mono100: 0.06, poly100: 0.04, fdaG: 148, fdaLabel: "148g · 1 medium", fdaLabelFa: "۱۴۸ گرم · ۱ عدد متوسط", ttp: 45 },
+  { id: "sweet-potato", name: "Sweet potato", nameFa: "سیب‌زمینی شیرین", cat: "veg", sodium100: 40, potassium100: 300, calcium100: 40, iron100: 0.8, vitC100: 20, magnesium100: 20, zinc100: 0.4, vitA100: 709, vitB12_100: 0, folate100: 40, gi: 63, carbs100: 20, sugar100: 4.2, fiber100: 3, soluble100: 1.05, insoluble100: 1.95, protein100: 1.6, fat100: 0.1, satFat100: 0, mono100: 0.06, poly100: 0.04, fdaG: 150, fdaLabel: "150g · 1 medium", fdaLabelFa: "۱۵۰ گرم · ۱ عدد متوسط", ttp: 55 },
+  { id: "corn", name: "Sweet corn", nameFa: "ذرت شیرین", cat: "veg", sodium100: 40, potassium100: 300, calcium100: 40, iron100: 0.8, vitC100: 20, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 52, carbs100: 19, sugar100: 6.3, fiber100: 2, soluble100: 0.7, insoluble100: 1.3, protein100: 3.2, fat100: 1.2, satFat100: 0.2, mono100: 0.55, poly100: 0.45, fdaG: 90, fdaLabel: "90g · 1/2 cup", fdaLabelFa: "۹۰ گرم · نصف لیوان", ttp: 50 },
+  { id: "carrots", name: "Carrots (cooked)", nameFa: "هویج پخته", cat: "veg", sodium100: 40, potassium100: 300, calcium100: 40, iron100: 0.8, vitC100: 20, magnesium100: 20, zinc100: 0.4, vitA100: 852, vitB12_100: 0, folate100: 40, gi: 39, carbs100: 6, sugar100: 4.7, fiber100: 3, soluble100: 1.05, insoluble100: 1.95, protein100: 0.9, fat100: 0.2, satFat100: 0, mono100: 0.11, poly100: 0.09, fdaG: 78, fdaLabel: "78g · 1/2 cup", fdaLabelFa: "۷۸ گرم · نصف لیوان", ttp: 40 },
+  { id: "pumpkin", name: "Pumpkin", nameFa: "کدو تنبل", cat: "veg", sodium100: 40, potassium100: 300, calcium100: 40, iron100: 0.8, vitC100: 20, magnesium100: 20, zinc100: 0.4, vitA100: 170, vitB12_100: 0, folate100: 40, gi: 75, carbs100: 7, sugar100: 2.8, fiber100: 0.5, soluble100: 0.17, insoluble100: 0.33, protein100: 1, fat100: 0.1, satFat100: 0, mono100: 0.06, poly100: 0.04, fdaG: 120, fdaLabel: "120g · 1/2 cup", fdaLabelFa: "۱۲۰ گرم · نصف لیوان", ttp: 45 },
+  // Dairy, fats & nuts
+  { id: "ice-cream", name: "Ice cream", nameFa: "بستنی", cat: "fat", sodium100: 80, potassium100: 150, calcium100: 150, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 51, carbs100: 24, sugar100: 21, fiber100: 0.7, soluble100: 0.17, insoluble100: 0.53, protein100: 3.8, fat100: 11, satFat100: 6.8, mono100: 2.31, poly100: 1.89, fdaG: 66, fdaLabel: "66g · 1/2 cup", fdaLabelFa: "۶۶ گرم · نصف لیوان", ttp: 90 },
+  { id: "milk", name: "Whole milk", nameFa: "شیر پرچرب", cat: "fat", sodium100: 43, potassium100: 150, calcium100: 113, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 46, vitB12_100: 0.5, folate100: 8, gi: 39, carbs100: 5, sugar100: 5, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 3.3, fat100: 3.6, satFat100: 2.3, mono100: 0.72, poly100: 0.58, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 45 },
+  { id: "yogurt", name: "Plain yogurt", nameFa: "ماست ساده", cat: "fat", sodium100: 80, potassium100: 155, calcium100: 110, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.4, folate100: 8, gi: 35, carbs100: 5, sugar100: 4.7, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 3.5, fat100: 3.3, satFat100: 2.1, mono100: 0.66, poly100: 0.54, fdaG: 170, fdaLabel: "170g · ~2/3 cup", fdaLabelFa: "۱۷۰ گرم · ~دو سوم لیوان", ttp: 50 },
+  { id: "greek-yogurt", name: "Greek yogurt", nameFa: "ماست یونانی", cat: "fat", sodium100: 80, potassium100: 140, calcium100: 115, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.5, folate100: 8, gi: 11, carbs100: 3.6, sugar100: 3.6, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 10, fat100: 5, satFat100: 3.2, mono100: 0.99, poly100: 0.81, fdaG: 170, fdaLabel: "170g · ~2/3 cup", fdaLabelFa: "۱۷۰ گرم · ~دو سوم لیوان", ttp: 50 },
+  { id: "sweet-yogurt", name: "Sweetened yogurt", nameFa: "ماست شیرین", cat: "fat", sodium100: 80, potassium100: 130, calcium100: 100, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 45, carbs100: 15, sugar100: 14, fiber100: 0.3, soluble100: 0.07, insoluble100: 0.23, protein100: 3.2, fat100: 2, satFat100: 1.3, mono100: 0.39, poly100: 0.31, fdaG: 170, fdaLabel: "170g · ~2/3 cup", fdaLabelFa: "۱۷۰ گرم · ~دو سوم لیوان", ttp: 55 },
+  { id: "dark-chocolate", name: "Dark chocolate", nameFa: "شکلات تلخ", cat: "fat", sodium100: 80, potassium100: 150, calcium100: 73, iron100: 8, vitC100: 0, magnesium100: 146, zinc100: 3.3, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 23, carbs100: 46, sugar100: 24, fiber100: 11, soluble100: 2.75, insoluble100: 8.25, protein100: 7.8, fat100: 43, satFat100: 25, mono100: 14.94, poly100: 3.06, fdaG: 40, fdaLabel: "40g · 1 small bar", fdaLabelFa: "۴۰ گرم · ۱ تخته کوچک", ttp: 60 },
+  { id: "milk-chocolate", name: "Milk chocolate", nameFa: "شکلات شیری", cat: "fat", sodium100: 80, potassium100: 150, calcium100: 189, iron100: 2.4, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 43, carbs100: 57, sugar100: 51, fiber100: 3.4, soluble100: 0.85, insoluble100: 2.55, protein100: 7.7, fat100: 30, satFat100: 18, mono100: 9.0, poly100: 3.0, fdaG: 40, fdaLabel: "40g · 1 small bar", fdaLabelFa: "۴۰ گرم · ۱ تخته کوچک", ttp: 55 },
+  { id: "pizza", name: "Cheese pizza", nameFa: "پیتزا پنیر", cat: "fat", sodium100: 600, potassium100: 150, calcium100: 180, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 60, carbs100: 33, sugar100: 3.5, fiber100: 2.3, soluble100: 0.57, insoluble100: 1.73, protein100: 11, fat100: 10, satFat100: 4.5, mono100: 3.03, poly100: 2.47, fdaG: 140, fdaLabel: "140g · 2 slices", fdaLabelFa: "۱۴۰ گرم · ۲ برش", ttp: 90 },
+  { id: "peanut-butter", name: "Peanut butter", nameFa: "کره بادام‌زمینی", cat: "fat", sodium100: 80, potassium100: 649, calcium100: 43, iron100: 1.9, vitC100: 0, magnesium100: 168, zinc100: 2.9, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 14, carbs100: 20, sugar100: 9, fiber100: 6, soluble100: 1.5, insoluble100: 4.5, protein100: 25, fat100: 50, satFat100: 10, mono100: 24.0, poly100: 16.0, fdaG: 32, fdaLabel: "32g · 2 tbsp", fdaLabelFa: "۳۲ گرم · ۲ قاشق غذاخوری", ttp: 70 },
+  { id: "olive-oil", name: "Olive oil", nameFa: "روغن زیتون", cat: "fat", sodium100: 2, potassium100: 1, calcium100: 1, iron100: 0.6, vitC100: 0, magnesium100: 0, zinc100: 0, vitA100: 0, vitB12_100: 0.3, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 0, fat100: 100, satFat100: 14, mono100: 73.1, poly100: 12.9, fdaG: 14, fdaLabel: "14g · 1 tbsp", fdaLabelFa: "۱۴ گرم · ۱ قاشق غذاخوری", ttp: 60 },
+  { id: "butter", name: "Butter", nameFa: "کره", cat: "fat", sodium100: 11, potassium100: 24, calcium100: 24, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 684, vitB12_100: 0.3, folate100: 8, gi: 0, carbs100: 0.1, sugar100: 0.1, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 0.9, fat100: 81, satFat100: 51, mono100: 27.0, poly100: 3.0, fdaG: 14, fdaLabel: "14g · 1 tbsp", fdaLabelFa: "۱۴ گرم · ۱ قاشق غذاخوری", ttp: 60 },
+  { id: "avocado", name: "Avocado", nameFa: "آووکادو", cat: "fat", sodium100: 80, potassium100: 485, calcium100: 150, iron100: 1.0, vitC100: 10, magnesium100: 29, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 81, gi: 15, carbs100: 1.8, sugar100: 0.7, fiber100: 6.7, soluble100: 1.68, insoluble100: 5.02, protein100: 2, fat100: 15, satFat100: 2.1, mono100: 10.32, poly100: 2.58, fdaG: 50, fdaLabel: "50g · ~1/3 avocado", fdaLabelFa: "۵۰ گرم · ~یک‌سوم آووکادو", ttp: 60 },
+  { id: "almonds", name: "Almonds", nameFa: "بادام", cat: "fat", sodium100: 80, potassium100: 733, calcium100: 269, iron100: 3.7, vitC100: 0, magnesium100: 270, zinc100: 3.1, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 15, carbs100: 9, sugar100: 4.4, fiber100: 12.5, soluble100: 3.12, insoluble100: 9.38, protein100: 21, fat100: 50, satFat100: 3.8, mono100: 31.28, poly100: 14.72, fdaG: 28, fdaLabel: "28g · ~23 almonds", fdaLabelFa: "۲۸ گرم · ~۲۳ عدد", ttp: 60 },
+  { id: "walnuts", name: "Walnuts", nameFa: "گردو", cat: "fat", sodium100: 80, potassium100: 441, calcium100: 98, iron100: 2.9, vitC100: 0, magnesium100: 158, zinc100: 3.1, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 15, carbs100: 7, sugar100: 2.6, fiber100: 6.7, soluble100: 1.68, insoluble100: 5.02, protein100: 15, fat100: 65, satFat100: 6, mono100: 11.8, poly100: 47.2, fdaG: 28, fdaLabel: "28g · ~14 halves", fdaLabelFa: "۲۸ گرم · ~۱۴ نیمه", ttp: 60 },
+  { id: "cheddar-cheese", name: "Cheddar cheese", nameFa: "پنیر چدار", cat: "fat", sodium100: 620, potassium100: 150, calcium100: 720, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 265, vitB12_100: 0.8, folate100: 8, gi: 0, carbs100: 1.3, sugar100: 0.5, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 25, fat100: 33, satFat100: 21, mono100: 9.0, poly100: 3.0, fdaG: 28, fdaLabel: "28g · 1oz slice", fdaLabelFa: "۲۸ گرم · ۱ برش", ttp: 60 },
+  { id: "cottage-cheese", name: "Cottage cheese", nameFa: "پنیر کاتیج", cat: "fat", sodium100: 364, potassium100: 150, calcium100: 83, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.4, folate100: 8, gi: 10, carbs100: 3.4, sugar100: 2.7, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 11, fat100: 4.3, satFat100: 2.7, mono100: 1.1, poly100: 0.5, fdaG: 113, fdaLabel: "113g · 1/2 cup", fdaLabelFa: "۱۱۳ گرم · نصف لیوان", ttp: 50 },
+  // Sweets
+  { id: "cake", name: "Sponge cake", nameFa: "کیک اسفنجی", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 46, carbs100: 63, sugar100: 40, fiber100: 1, soluble100: 0.3, insoluble100: 0.7, protein100: 5, fat100: 11, satFat100: 3, mono100: 4.4, poly100: 3.6, fdaG: 80, fdaLabel: "80g · 1 slice", fdaLabelFa: "۸۰ گرم · ۱ برش", ttp: 45 },
+  { id: "sugar", name: "Table sugar", nameFa: "شکر", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 65, carbs100: 100, sugar100: 100, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 0, fat100: 0, satFat100: 0, mono100: 0.0, poly100: 0.0, fdaG: 4, fdaLabel: "4g · 1 tsp", fdaLabelFa: "۴ گرم · ۱ قاشق چای‌خوری", ttp: 30 },
+  { id: "glucose", name: "Glucose drink", nameFa: "نوشیدنی گلوکز", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 100, carbs100: 100, sugar100: 100, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 0, fat100: 0, satFat100: 0, mono100: 0.0, poly100: 0.0, fdaG: 50, fdaLabel: "50g · test dose", fdaLabelFa: "۵۰ گرم · دوز آزمایش", ttp: 20 },
+  { id: "honey", name: "Honey", nameFa: "عسل", cat: "sweet", sodium100: 100, potassium100: 52, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 61, carbs100: 82, sugar100: 82, fiber100: 0.2, soluble100: 0.06, insoluble100: 0.14, protein100: 0.3, fat100: 0, satFat100: 0, mono100: 0.0, poly100: 0.0, fdaG: 21, fdaLabel: "21g · 1 tbsp", fdaLabelFa: "۲۱ گرم · ۱ قاشق غذاخوری", ttp: 35 },
+  { id: "doughnut", name: "Doughnut", nameFa: "دونات", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 76, carbs100: 49, sugar100: 22, fiber100: 1.5, soluble100: 0.45, insoluble100: 1.05, protein100: 5, fat100: 23, satFat100: 10, mono100: 7.15, poly100: 5.85, fdaG: 60, fdaLabel: "60g · 1 doughnut", fdaLabelFa: "۶۰ گرم · ۱ عدد", ttp: 40 },
+  { id: "cookies", name: "Cookies", nameFa: "کلوچه", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 64, carbs100: 68, sugar100: 30, fiber100: 2, soluble100: 0.6, insoluble100: 1.4, protein100: 5.5, fat100: 20, satFat100: 9, mono100: 6.05, poly100: 4.95, fdaG: 30, fdaLabel: "30g · 3 cookies", fdaLabelFa: "۳۰ گرم · ۳ عدد", ttp: 40 },
+  // Beverages
+  { id: "oj", name: "Orange juice", nameFa: "آب پرتقال", cat: "drink", sodium100: 10, potassium100: 150, calcium100: 10, iron100: 0.2, vitC100: 40, magnesium100: 8, zinc100: 0.2, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 50, carbs100: 10, sugar100: 9, fiber100: 0.2, soluble100: 0.06, insoluble100: 0.14, protein100: 0.7, fat100: 0.2, satFat100: 0, mono100: 0.11, poly100: 0.09, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 30 },
+  { id: "apple-juice", name: "Apple juice", nameFa: "آب سیب", cat: "drink", sodium100: 10, potassium100: 150, calcium100: 10, iron100: 0.2, vitC100: 1, magnesium100: 8, zinc100: 0.2, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 41, carbs100: 11, sugar100: 10, fiber100: 0.2, soluble100: 0.06, insoluble100: 0.14, protein100: 0.1, fat100: 0.1, satFat100: 0, mono100: 0.06, poly100: 0.04, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 30 },
+  { id: "soda", name: "Cola / soda", nameFa: "نوشابه", cat: "drink", sodium100: 10, potassium100: 2, calcium100: 10, iron100: 0.2, vitC100: 15, magnesium100: 8, zinc100: 0.2, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 63, carbs100: 11, sugar100: 10.6, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 0, fat100: 0, satFat100: 0, mono100: 0.0, poly100: 0.0, fdaG: 355, fdaLabel: "355ml · 1 can", fdaLabelFa: "۳۵۵ میلی‌لیتر · ۱ قوطی", ttp: 25 },
+  { id: "sports-drink", name: "Sports drink", nameFa: "نوشیدنی ورزشی", cat: "drink", sodium100: 110, potassium100: 30, calcium100: 10, iron100: 0.2, vitC100: 15, magnesium100: 8, zinc100: 0.2, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 78, carbs100: 6, sugar100: 6, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 0, fat100: 0, satFat100: 0, mono100: 0.0, poly100: 0.0, fdaG: 355, fdaLabel: "355ml · 1 bottle", fdaLabelFa: "۳۵۵ میلی‌لیتر · ۱ بطری", ttp: 20 },
+  // Meat, fish & eggs
+  { id: "chicken-breast", name: "Chicken breast", nameFa: "سینه مرغ", cat: "protein", sodium100: 70, potassium100: 256, calcium100: 15, iron100: 0.7, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 0.3, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 31, fat100: 3.6, satFat100: 1, mono100: 1.3, poly100: 1.3, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "salmon", name: "Salmon", nameFa: "ماهی سالمون", cat: "protein", sodium100: 70, potassium100: 384, calcium100: 15, iron100: 1.8, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 2.8, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 25, fat100: 13, satFat100: 3, mono100: 6.0, poly100: 4.0, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "egg", name: "Egg", nameFa: "تخم‌مرغ", cat: "protein", sodium100: 70, potassium100: 300, calcium100: 50, iron100: 1.2, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 80, vitB12_100: 0.9, folate100: 24, gi: 0, carbs100: 1.1, sugar100: 0.4, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 13, fat100: 11, satFat100: 3.3, mono100: 4.31, poly100: 3.39, fdaG: 50, fdaLabel: "50g · 1 large egg", fdaLabelFa: "۵۰ گرم · ۱ عدد درشت", ttp: 60 },
+  { id: "tofu", name: "Tofu", nameFa: "توفو", cat: "protein", sodium100: 70, potassium100: 300, calcium100: 15, iron100: 1.8, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 15, carbs100: 1.9, sugar100: 0.5, fiber100: 0.3, soluble100: 0.09, insoluble100: 0.21, protein100: 8, fat100: 4.8, satFat100: 0.7, mono100: 2.25, poly100: 1.85, fdaG: 85, fdaLabel: "85g · ~1/2 cup", fdaLabelFa: "۸۵ گرم · ~نصف لیوان", ttp: 45 },
+  { id: "beef-steak", name: "Beef steak", nameFa: "استیک گوشت گاو", cat: "protein", sodium100: 70, potassium100: 315, calcium100: 15, iron100: 2.6, vitC100: 0, magnesium100: 24, zinc100: 4.8, vitA100: 15, vitB12_100: 2.6, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 27, fat100: 15, satFat100: 6, mono100: 7.02, poly100: 1.98, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "tuna", name: "Tuna (canned)", nameFa: "تن ماهی", cat: "protein", sodium100: 70, potassium100: 252, calcium100: 15, iron100: 0.9, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 2.2, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 26, fat100: 1, satFat100: 0.3, mono100: 0.39, poly100: 0.31, fdaG: 85, fdaLabel: "85g · 3oz drained", fdaLabelFa: "۸۵ گرم · ۳ اونس آبکش", ttp: 60 },
+  { id: "bacon", name: "Bacon", nameFa: "بیکن", cat: "protein", sodium100: 1500, potassium100: 300, calcium100: 15, iron100: 1.0, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 0, carbs100: 1.4, sugar100: 0, fiber100: 0, soluble100: 0.0, insoluble100: 0.0, protein100: 37, fat100: 42, satFat100: 14, mono100: 17.92, poly100: 10.08, fdaG: 15, fdaLabel: "15g · 2 slices", fdaLabelFa: "۱۵ گرم · ۲ برش", ttp: 60 },
+  // Seeds & extra nuts
+  { id: "chia-seeds", name: "Chia seeds", nameFa: "دانه چیا", cat: "fat", sodium100: 80, potassium100: 407, calcium100: 631, iron100: 7.7, vitC100: 0, magnesium100: 335, zinc100: 4.6, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 1, carbs100: 8, sugar100: 0, fiber100: 34, soluble100: 12, insoluble100: 22, protein100: 17, fat100: 31, satFat100: 3.3, mono100: 2.3, poly100: 23.7, fdaG: 28, fdaLabel: "28g · 2 tbsp", fdaLabelFa: "۲۸ گرم · ۲ قاشق غذاخوری", ttp: 60 },
+  { id: "flaxseed", name: "Flaxseed (ground)", nameFa: "دانه کتان آسیاب", cat: "fat", sodium100: 80, potassium100: 813, calcium100: 255, iron100: 5.7, vitC100: 0, magnesium100: 392, zinc100: 4.3, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 1, carbs100: 2, sugar100: 1.5, fiber100: 27, soluble100: 8, insoluble100: 19, protein100: 18, fat100: 42, satFat100: 3.7, mono100: 7.5, poly100: 28.7, fdaG: 10, fdaLabel: "10g · 1 tbsp", fdaLabelFa: "۱۰ گرم · ۱ قاشق غذاخوری", ttp: 60 },
+  { id: "sunflower-seeds", name: "Sunflower seeds", nameFa: "تخمه آفتابگردان", cat: "fat", sodium100: 80, potassium100: 645, calcium100: 78, iron100: 5.0, vitC100: 0, magnesium100: 325, zinc100: 5.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 20, carbs100: 11.4, sugar100: 2.6, fiber100: 8.6, soluble100: 2, insoluble100: 6.6, protein100: 21, fat100: 51, satFat100: 5.4, mono100: 19, poly100: 26.5, fdaG: 28, fdaLabel: "28g · 1oz", fdaLabelFa: "۲۸ گرم · ۱ اونس", ttp: 60 },
+  { id: "pistachios", name: "Pistachios", nameFa: "پسته", cat: "fat", sodium100: 80, potassium100: 1025, calcium100: 105, iron100: 3.9, vitC100: 0, magnesium100: 121, zinc100: 2.2, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 15, carbs100: 18, sugar100: 7.7, fiber100: 10, soluble100: 2, insoluble100: 8, protein100: 20, fat100: 45, satFat100: 5.6, mono100: 24, poly100: 15, fdaG: 28, fdaLabel: "28g · ~49 kernels", fdaLabelFa: "۲۸ گرم · ~۴۹ عدد", ttp: 60 },
+  { id: "hazelnuts", name: "Hazelnuts", nameFa: "فندق", cat: "fat", sodium100: 80, potassium100: 680, calcium100: 114, iron100: 4.7, vitC100: 0, magnesium100: 163, zinc100: 2.5, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 15, carbs100: 7.3, sugar100: 4.3, fiber100: 9.7, soluble100: 2, insoluble100: 7.7, protein100: 15, fat100: 61, satFat100: 4.5, mono100: 46, poly100: 8, fdaG: 28, fdaLabel: "28g · ~21 nuts", fdaLabelFa: "۲۸ گرم · ~۲۱ عدد", ttp: 60 },
+  // Extra vegetables
+  { id: "broccoli", name: "Broccoli (cooked)", nameFa: "بروکلی پخته", cat: "veg", sodium100: 40, potassium100: 316, calcium100: 47, iron100: 0.8, vitC100: 89, magnesium100: 20, zinc100: 0.4, vitA100: 31, vitB12_100: 0, folate100: 63, gi: 15, carbs100: 3.7, sugar100: 1.7, fiber100: 3.3, soluble100: 1.2, insoluble100: 2.1, protein100: 2.8, fat100: 0.4, satFat100: 0.1, mono100: 0.02, poly100: 0.28, fdaG: 90, fdaLabel: "90g · ~1 cup", fdaLabelFa: "۹۰ گرم · ~۱ لیوان", ttp: 60 },
+  { id: "cauliflower", name: "Cauliflower (cooked)", nameFa: "گل‌کلم پخته", cat: "veg", sodium100: 40, potassium100: 299, calcium100: 40, iron100: 0.8, vitC100: 48, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 2.7, sugar100: 2, fiber100: 2.3, soluble100: 1, insoluble100: 1.3, protein100: 2, fat100: 0.3, satFat100: 0.1, mono100: 0.05, poly100: 0.15, fdaG: 100, fdaLabel: "100g · 1 cup", fdaLabelFa: "۱۰۰ گرم · ۱ لیوان", ttp: 60 },
+  { id: "brussels-sprouts", name: "Brussels sprouts (cooked)", nameFa: "کلم بروکسل پخته", cat: "veg", sodium100: 40, potassium100: 389, calcium100: 40, iron100: 0.8, vitC100: 85, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 5.2, sugar100: 2.2, fiber100: 3.8, soluble100: 1.5, insoluble100: 2.3, protein100: 3.4, fat100: 0.5, satFat100: 0.1, mono100: 0.1, poly100: 0.3, fdaG: 88, fdaLabel: "88g · 1 cup", fdaLabelFa: "۸۸ گرم · ۱ لیوان", ttp: 60 },
+  // Middle Eastern / Iranian foods
+  { id: "sangak", name: "Sangak / barbari bread", nameFa: "نان سنگک/بربری", cat: "grain", sodium100: 500, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 70, carbs100: 48, sugar100: 2, fiber100: 6, soluble100: 1.8, insoluble100: 4.2, protein100: 9, fat100: 1.5, satFat100: 0.3, mono100: 0.7, poly100: 0.5, fdaG: 60, fdaLabel: "60g · 1 piece", fdaLabelFa: "۶۰ گرم · ۱ تکه", ttp: 35 },
+  { id: "lavash", name: "Lavash bread", nameFa: "نان لواش", cat: "grain", sodium100: 520, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 75, carbs100: 55, sugar100: 2, fiber100: 2.5, soluble100: 0.75, insoluble100: 1.75, protein100: 9, fat100: 1, satFat100: 0.2, mono100: 0.4, poly100: 0.4, fdaG: 40, fdaLabel: "40g · 1 piece", fdaLabelFa: "۴۰ گرم · ۱ تکه", ttp: 30 },
+  { id: "tahdig", name: "Tahdig (crispy rice)", nameFa: "ته‌دیگ", cat: "grain", sodium100: 350, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 75, carbs100: 30, sugar100: 0.1, fiber100: 0.4, soluble100: 0.1, insoluble100: 0.3, protein100: 3, fat100: 8, satFat100: 1.5, mono100: 4.5, poly100: 2, fdaG: 100, fdaLabel: "100g · 1 piece", fdaLabelFa: "۱۰۰ گرم · ۱ تکه", ttp: 60 },
+  { id: "falafel", name: "Falafel", nameFa: "فلافل", cat: "legume", sodium100: 5, potassium100: 350, calcium100: 50, iron100: 2.5, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 150, gi: 40, carbs100: 20, sugar100: 2, fiber100: 5, soluble100: 1.75, insoluble100: 3.25, protein100: 13, fat100: 18, satFat100: 2.5, mono100: 10, poly100: 5.5, fdaG: 85, fdaLabel: "85g · 4 pieces", fdaLabelFa: "۸۵ گرم · ۴ عدد", ttp: 70 },
+  { id: "kabab-koobideh", name: "Kabab koobideh", nameFa: "کباب کوبیده", cat: "protein", sodium100: 70, potassium100: 300, calcium100: 15, iron100: 1.8, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 0, carbs100: 2, sugar100: 0.5, fiber100: 0.2, soluble100: 0.05, insoluble100: 0.15, protein100: 20, fat100: 22, satFat100: 9, mono100: 10, poly100: 3, fdaG: 100, fdaLabel: "100g · 1 skewer", fdaLabelFa: "۱۰۰ گرم · ۱ سیخ", ttp: 60 },
+  { id: "joojeh-kabab", name: "Joojeh kabab (chicken)", nameFa: "جوجه کباب", cat: "protein", sodium100: 70, potassium100: 300, calcium100: 15, iron100: 1.8, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 0, carbs100: 1, sugar100: 0.5, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 28, fat100: 8, satFat100: 2, mono100: 4, poly100: 2, fdaG: 100, fdaLabel: "100g · 1 skewer", fdaLabelFa: "۱۰۰ گرم · ۱ سیخ", ttp: 60 },
+  { id: "ghormeh-sabzi", name: "Ghormeh sabzi", nameFa: "قورمه سبزی", cat: "legume", sodium100: 5, potassium100: 350, calcium100: 50, iron100: 2.5, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 150, gi: 35, carbs100: 7, sugar100: 1, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 10, fat100: 9, satFat100: 2, mono100: 5, poly100: 2, fdaG: 250, fdaLabel: "250g · 1 bowl", fdaLabelFa: "۲۵۰ گرم · ۱ کاسه", ttp: 70 },
+  { id: "fesenjan", name: "Fesenjan", nameFa: "فسنجان", cat: "fat", sodium100: 80, potassium100: 150, calcium100: 150, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 40, carbs100: 10, sugar100: 7, fiber100: 2, soluble100: 0.6, insoluble100: 1.4, protein100: 14, fat100: 16, satFat100: 2, mono100: 4, poly100: 10, fdaG: 250, fdaLabel: "250g · 1 bowl", fdaLabelFa: "۲۵۰ گرم · ۱ کاسه", ttp: 70 },
+  { id: "ash-reshteh", name: "Ash reshteh", nameFa: "آش رشته", cat: "legume", sodium100: 5, potassium100: 350, calcium100: 50, iron100: 2.5, vitC100: 2, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 150, gi: 35, carbs100: 10, sugar100: 1, fiber100: 3, soluble100: 1.2, insoluble100: 1.8, protein100: 5, fat100: 3, satFat100: 1, mono100: 1.3, poly100: 0.7, fdaG: 300, fdaLabel: "300g · 1 bowl", fdaLabelFa: "۳۰۰ گرم · ۱ کاسه", ttp: 70 },
+  { id: "dolmeh", name: "Dolmeh (stuffed grape leaves)", nameFa: "دلمه برگ مو", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 55, carbs100: 15, sugar100: 1, fiber100: 2, soluble100: 0.7, insoluble100: 1.3, protein100: 3, fat100: 5, satFat100: 1, mono100: 3, poly100: 1, fdaG: 150, fdaLabel: "150g · 6 pieces", fdaLabelFa: "۱۵۰ گرم · ۶ عدد", ttp: 55 },
+  { id: "kashk-bademjan", name: "Kashk-e bademjan", nameFa: "کشک بادمجان", cat: "veg", sodium100: 40, potassium100: 300, calcium100: 40, iron100: 0.8, vitC100: 20, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 30, carbs100: 6, sugar100: 3, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 4, fat100: 10, satFat100: 3, mono100: 5, poly100: 2, fdaG: 150, fdaLabel: "150g · serving", fdaLabelFa: "۱۵۰ گرم · ۱ سرو", ttp: 60 },
+  { id: "mast-o-khiar", name: "Mast-o-khiar", nameFa: "ماست و خیار", cat: "fat", sodium100: 80, potassium100: 150, calcium100: 150, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 30, carbs100: 4, sugar100: 3, fiber100: 0.5, soluble100: 0.2, insoluble100: 0.3, protein100: 4, fat100: 3, satFat100: 2, mono100: 0.8, poly100: 0.2, fdaG: 150, fdaLabel: "150g · 1 bowl", fdaLabelFa: "۱۵۰ گرم · ۱ کاسه", ttp: 50 },
+  { id: "doogh", name: "Doogh", nameFa: "دوغ", cat: "drink", sodium100: 350, potassium100: 150, calcium100: 90, iron100: 0.2, vitC100: 15, magnesium100: 8, zinc100: 0.2, vitA100: 5, vitB12_100: 0.2, folate100: 5, gi: 30, carbs100: 3, sugar100: 3, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 2, fat100: 1.5, satFat100: 1, mono100: 0.4, poly100: 0.1, fdaG: 250, fdaLabel: "250ml · 1 glass", fdaLabelFa: "۲۵۰ میلی‌لیتر · ۱ لیوان", ttp: 40 },
+  { id: "halva", name: "Halva", nameFa: "حلوا", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 45, carbs100: 45, sugar100: 40, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 12, fat100: 32, satFat100: 5, mono100: 13, poly100: 14, fdaG: 30, fdaLabel: "30g · 1 slice", fdaLabelFa: "۳۰ گرم · ۱ تکه", ttp: 45 },
+  { id: "baklava", name: "Baklava", nameFa: "باقلوا", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 55, carbs100: 48, sugar100: 30, fiber100: 2, soluble100: 0.6, insoluble100: 1.4, protein100: 6, fat100: 25, satFat100: 6, mono100: 12, poly100: 7, fdaG: 40, fdaLabel: "40g · 1 piece", fdaLabelFa: "۴۰ گرم · ۱ تکه", ttp: 45 },
+  { id: "sholeh-zard", name: "Sholeh zard", nameFa: "شله زرد", cat: "sweet", sodium100: 100, potassium100: 80, calcium100: 20, iron100: 0.8, vitC100: 0, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 65, carbs100: 30, sugar100: 18, fiber100: 0.5, soluble100: 0.2, insoluble100: 0.3, protein100: 2, fat100: 3, satFat100: 0.5, mono100: 1.5, poly100: 1, fdaG: 150, fdaLabel: "150g · 1 bowl", fdaLabelFa: "۱۵۰ گرم · ۱ کاسه", ttp: 50 },
+  { id: "feta", name: "Persian white cheese (feta)", nameFa: "پنیر سفید", cat: "fat", sodium100: 900, potassium100: 150, calcium100: 490, iron100: 1.0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 138, vitB12_100: 1.7, folate100: 8, gi: 0, carbs100: 1.5, sugar100: 1.5, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 14, fat100: 21, satFat100: 15, mono100: 5, poly100: 1, fdaG: 28, fdaLabel: "28g · 1oz", fdaLabelFa: "۲۸ گرم · ۱ اونس", ttp: 55 },
+  { id: "pomegranate", name: "Pomegranate", nameFa: "انار", cat: "fruit", sodium100: 2, potassium100: 236, calcium100: 15, iron100: 0.3, vitC100: 10, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 35, carbs100: 14, sugar100: 14, fiber100: 4, soluble100: 1.6, insoluble100: 2.4, protein100: 1.7, fat100: 1.2, satFat100: 0.1, mono100: 0.1, poly100: 1, fdaG: 174, fdaLabel: "174g · 1 cup arils", fdaLabelFa: "۱۷۴ گرم · ۱ لیوان دانه", ttp: 40 },
+  { id: "fig", name: "Fig (fresh)", nameFa: "انجیر", cat: "fruit", sodium100: 2, potassium100: 232, calcium100: 35, iron100: 0.3, vitC100: 25, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 35, carbs100: 16, sugar100: 16, fiber100: 3, soluble100: 1.2, insoluble100: 1.8, protein100: 0.8, fat100: 0.3, satFat100: 0.1, mono100: 0.1, poly100: 0.1, fdaG: 50, fdaLabel: "50g · 1 medium", fdaLabelFa: "۵۰ گرم · ۱ عدد متوسط", ttp: 40 },
+  { id: "kuku-sabzi", name: "Kuku sabzi (herb frittata)", nameFa: "کوکو سبزی", cat: "protein", sodium100: 70, potassium100: 300, calcium100: 15, iron100: 1.8, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 15, carbs100: 5, sugar100: 1, fiber100: 2, soluble100: 0.7, insoluble100: 1.3, protein100: 9, fat100: 10, satFat100: 2, mono100: 5, poly100: 3, fdaG: 100, fdaLabel: "100g · 1 slice", fdaLabelFa: "۱۰۰ گرم · ۱ تکه", ttp: 55 },
+  { id: "zereshk-polo", name: "Zereshk polo (barberry rice)", nameFa: "زرشک پلو", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 70, carbs100: 32, sugar100: 4, fiber100: 1, soluble100: 0.3, insoluble100: 0.7, protein100: 3, fat100: 3, satFat100: 0.5, mono100: 1.8, poly100: 0.7, fdaG: 180, fdaLabel: "180g · 1 cup", fdaLabelFa: "۱۸۰ گرم · ۱ لیوان", ttp: 55 },
+  { id: "adas-polo", name: "Adas polo (lentil rice)", nameFa: "عدس پلو", cat: "grain", sodium100: 280, potassium100: 120, calcium100: 30, iron100: 1.5, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 55, carbs100: 26, sugar100: 1, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 6, fat100: 3, satFat100: 0.5, mono100: 1.8, poly100: 0.7, fdaG: 180, fdaLabel: "180g · 1 cup", fdaLabelFa: "۱۸۰ گرم · ۱ لیوان", ttp: 60 },
+  { id: "kotlet", name: "Kotlet (potato-meat patty)", nameFa: "کتلت", cat: "protein", sodium100: 70, potassium100: 300, calcium100: 15, iron100: 1.8, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 55, carbs100: 15, sugar100: 1, fiber100: 1.5, soluble100: 0.5, insoluble100: 1, protein100: 12, fat100: 14, satFat100: 3, mono100: 7.5, poly100: 3.5, fdaG: 100, fdaLabel: "100g · 2 patties", fdaLabelFa: "۱۰۰ گرم · ۲ عدد", ttp: 55 },
+  // Base ingredients (for building dishes)
+  { id: "onion", name: "Onion (raw)", nameFa: "پیاز خام", cat: "veg", sodium100: 4, potassium100: 146, calcium100: 23, iron100: 0.2, vitC100: 7.4, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 7.6, sugar100: 4.2, fiber100: 1.7, soluble100: 0.6, insoluble100: 1.1, protein100: 1.1, fat100: 0.1, satFat100: 0, mono100: 0, poly100: 0.1, fdaG: 110, fdaLabel: "110g · 1 medium", fdaLabelFa: "۱۱۰ گرم · ۱ عدد متوسط", ttp: 45 },
+  { id: "garlic", name: "Garlic", nameFa: "سیر", cat: "veg", sodium100: 17, potassium100: 401, calcium100: 181, iron100: 1.7, vitC100: 31, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 30, carbs100: 28, sugar100: 1, fiber100: 2.1, soluble100: 0.7, insoluble100: 1.4, protein100: 6.4, fat100: 0.5, satFat100: 0.1, mono100: 0.15, poly100: 0.25, fdaG: 3, fdaLabel: "3g · 1 clove", fdaLabelFa: "۳ گرم · ۱ حبه", ttp: 45 },
+  { id: "tomato", name: "Tomato", nameFa: "گوجه‌فرنگی", cat: "veg", sodium100: 5, potassium100: 237, calcium100: 10, iron100: 0.3, vitC100: 14, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 3.9, sugar100: 2.6, fiber100: 1.2, soluble100: 0.4, insoluble100: 0.8, protein100: 0.9, fat100: 0.2, satFat100: 0, mono100: 0.12, poly100: 0.08, fdaG: 123, fdaLabel: "123g · 1 medium", fdaLabelFa: "۱۲۳ گرم · ۱ عدد متوسط", ttp: 40 },
+  { id: "cucumber", name: "Cucumber", nameFa: "خیار", cat: "veg", sodium100: 2, potassium100: 147, calcium100: 16, iron100: 0.3, vitC100: 2.8, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 3.6, sugar100: 1.7, fiber100: 0.5, soluble100: 0.2, insoluble100: 0.3, protein100: 0.7, fat100: 0.1, satFat100: 0, mono100: 0.05, poly100: 0.05, fdaG: 100, fdaLabel: "100g · ~1/2 cucumber", fdaLabelFa: "۱۰۰ گرم · ~نصف خیار", ttp: 40 },
+  { id: "eggplant", name: "Eggplant (cooked)", nameFa: "بادمجان پخته", cat: "veg", sodium100: 1, potassium100: 123, calcium100: 6, iron100: 0.2, vitC100: 1.3, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 6.2, sugar100: 3.2, fiber100: 2.5, soluble100: 0.9, insoluble100: 1.6, protein100: 0.8, fat100: 0.2, satFat100: 0, mono100: 0.05, poly100: 0.15, fdaG: 99, fdaLabel: "99g · 1 cup", fdaLabelFa: "۹۹ گرم · ۱ لیوان", ttp: 45 },
+  { id: "zucchini", name: "Zucchini (cooked)", nameFa: "کدو سبز پخته", cat: "veg", sodium100: 2, potassium100: 261, calcium100: 16, iron100: 0.4, vitC100: 4.5, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 3.1, sugar100: 2.5, fiber100: 1, soluble100: 0.3, insoluble100: 0.7, protein100: 1.2, fat100: 0.3, satFat100: 0.05, mono100: 0.05, poly100: 0.2, fdaG: 124, fdaLabel: "124g · 1 cup", fdaLabelFa: "۱۲۴ گرم · ۱ لیوان", ttp: 40 },
+  { id: "bell-pepper", name: "Bell pepper", nameFa: "فلفل دلمه‌ای", cat: "veg", sodium100: 3, potassium100: 211, calcium100: 10, iron100: 0.3, vitC100: 80, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 4.6, sugar100: 2.4, fiber100: 1.7, soluble100: 0.6, insoluble100: 1.1, protein100: 1, fat100: 0.3, satFat100: 0.03, mono100: 0.02, poly100: 0.25, fdaG: 92, fdaLabel: "92g · 1/2 pepper", fdaLabelFa: "۹۲ گرم · نصف عدد", ttp: 40 },
+  { id: "parsley", name: "Fresh herbs (parsley mix)", nameFa: "سبزی خوردن (جعفری و غیره)", cat: "veg", sodium100: 56, potassium100: 554, calcium100: 138, iron100: 6.2, vitC100: 133, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 15, carbs100: 6.3, sugar100: 0.9, fiber100: 3.3, soluble100: 0.9, insoluble100: 2.4, protein100: 3, fat100: 0.8, satFat100: 0.1, mono100: 0.3, poly100: 0.4, fdaG: 10, fdaLabel: "10g · small handful", fdaLabelFa: "۱۰ گرم · یک مشت کوچک", ttp: 45 },
+  { id: "lemon-juice", name: "Lemon juice", nameFa: "آب لیمو", cat: "fruit", sodium100: 1, potassium100: 124, calcium100: 6, iron100: 0.1, vitC100: 39, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 15, carbs100: 6.9, sugar100: 2.5, fiber100: 0.1, soluble100: 0.05, insoluble100: 0.05, protein100: 0.4, fat100: 0.2, satFat100: 0.02, mono100: 0.03, poly100: 0.15, fdaG: 15, fdaLabel: "15ml · 1 tbsp", fdaLabelFa: "۱۵ میلی‌لیتر · ۱ قاشق غذاخوری", ttp: 30 },
+  { id: "tomato-paste", name: "Tomato paste", nameFa: "رب گوجه‌فرنگی", cat: "veg", sodium100: 59, potassium100: 1014, calcium100: 36, iron100: 3, vitC100: 22, magnesium100: 20, zinc100: 0.4, vitA100: 100, vitB12_100: 0, folate100: 40, gi: 35, carbs100: 18.9, sugar100: 12.2, fiber100: 4.1, soluble100: 1.4, insoluble100: 2.7, protein100: 4.3, fat100: 0.5, satFat100: 0.08, mono100: 0.07, poly100: 0.35, fdaG: 33, fdaLabel: "33g · 2 tbsp", fdaLabelFa: "۳۳ گرم · ۲ قاشق غذاخوری", ttp: 45 },
+  { id: "pomegranate-molasses", name: "Pomegranate molasses", nameFa: "رب انار", cat: "sweet", sodium100: 30, potassium100: 250, calcium100: 20, iron100: 1, vitC100: 5, magnesium100: 10, zinc100: 0.3, vitA100: 5, vitB12_100: 0, folate100: 5, gi: 55, carbs100: 68, sugar100: 60, fiber100: 0.5, soluble100: 0.2, insoluble100: 0.3, protein100: 1, fat100: 0.3, satFat100: 0.05, mono100: 0.05, poly100: 0.2, fdaG: 15, fdaLabel: "15g · 1 tbsp", fdaLabelFa: "۱۵ گرم · ۱ قاشق غذاخوری", ttp: 35 },
+  { id: "ground-beef", name: "Ground beef (cooked)", nameFa: "گوشت چرخ‌کرده گاو", cat: "protein", sodium100: 75, potassium100: 270, calcium100: 18, iron100: 2.4, vitC100: 0, magnesium100: 24, zinc100: 4.5, vitA100: 15, vitB12_100: 2.4, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 26, fat100: 20, satFat100: 8, mono100: 10.5, poly100: 1.5, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "lamb", name: "Lamb (cooked)", nameFa: "گوشت بره", cat: "protein", sodium100: 72, potassium100: 310, calcium100: 17, iron100: 1.9, vitC100: 0, magnesium100: 24, zinc100: 4.0, vitA100: 15, vitB12_100: 2.6, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 25, fat100: 21, satFat100: 9, mono100: 10, poly100: 2, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "chicken-thigh", name: "Chicken thigh (cooked)", nameFa: "ران مرغ", cat: "protein", sodium100: 90, potassium100: 240, calcium100: 12, iron100: 1.3, vitC100: 0, magnesium100: 24, zinc100: 2.5, vitA100: 15, vitB12_100: 1.2, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 24, fat100: 13, satFat100: 3.5, mono100: 6.5, poly100: 3, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "vegetable-oil", name: "Vegetable oil", nameFa: "روغن مایع", cat: "fat", sodium100: 0, potassium100: 0, calcium100: 0, iron100: 0, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.3, folate100: 8, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 0, fat100: 100, satFat100: 11, mono100: 26, poly100: 63, fdaG: 14, fdaLabel: "14g · 1 tbsp", fdaLabelFa: "۱۴ گرم · ۱ قاشق غذاخوری", ttp: 60 },
+  { id: "breadcrumbs", name: "Breadcrumbs", nameFa: "سوخاری/آرد نان", cat: "grain", sodium100: 700, potassium100: 150, calcium100: 100, iron100: 3.6, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 70, carbs100: 72, sugar100: 6, fiber100: 4, soluble100: 1.2, insoluble100: 2.8, protein100: 12, fat100: 5, satFat100: 1, mono100: 2, poly100: 2, fdaG: 30, fdaLabel: "30g · 1/3 cup", fdaLabelFa: "۳۰ گرم · یک‌سوم لیوان", ttp: 35 },
+  { id: "kashk", name: "Kashk (fermented whey)", nameFa: "کشک", cat: "fat", sodium100: 450, potassium100: 150, calcium100: 150, iron100: 0.2, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 60, vitB12_100: 0.4, folate100: 8, gi: 25, carbs100: 5, sugar100: 4, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 10, fat100: 6, satFat100: 4, mono100: 1.5, poly100: 0.5, fdaG: 50, fdaLabel: "50g · ~3 tbsp", fdaLabelFa: "۵۰ گرم · ~۳ قاشق غذاخوری", ttp: 50 },
+  { id: "barberries", name: "Barberries (dried, zereshk)", nameFa: "زرشک", cat: "fruit", sodium100: 5, potassium100: 350, calcium100: 30, iron100: 1.5, vitC100: 70, magnesium100: 12, zinc100: 0.2, vitA100: 15, vitB12_100: 0, folate100: 15, gi: 25, carbs100: 68, sugar100: 55, fiber100: 6, soluble100: 2, insoluble100: 4, protein100: 2, fat100: 0.5, satFat100: 0.05, mono100: 0.1, poly100: 0.35, fdaG: 10, fdaLabel: "10g · 1 tbsp", fdaLabelFa: "۱۰ گرم · ۱ قاشق غذاخوری", ttp: 45 },
+  { id: "reshteh-noodles", name: "Reshteh (Persian noodles)", nameFa: "رشته آش", cat: "grain", sodium100: 5, potassium100: 70, calcium100: 15, iron100: 1, vitC100: 0, magnesium100: 25, zinc100: 1.0, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 55, carbs100: 25, sugar100: 1, fiber100: 1.5, soluble100: 0.5, insoluble100: 1, protein100: 5, fat100: 1, satFat100: 0.2, mono100: 0.4, poly100: 0.4, fdaG: 140, fdaLabel: "140g · ~1.5 cups cooked", fdaLabelFa: "۱۴۰ گرم · ~۱.۵ لیوان پخته", ttp: 50 },
+  { id: "split-peas", name: "Split peas (cooked)", nameFa: "لپه", cat: "legume", sodium100: 2, potassium100: 270, calcium100: 14, iron100: 1.5, vitC100: 1, magnesium100: 45, zinc100: 1.5, vitA100: 1, vitB12_100: 0, folate100: 150, gi: 25, carbs100: 14, sugar100: 2, fiber100: 5, soluble100: 2, insoluble100: 3, protein100: 7, fat100: 0.4, satFat100: 0.1, mono100: 0.1, poly100: 0.2, fdaG: 100, fdaLabel: "100g · ~1/2 cup", fdaLabelFa: "۱۰۰ گرم · ~نصف لیوان", ttp: 90 },
+  // More ingredients & dishes
+  { id: "basmati-rice", name: "Basmati rice", nameFa: "برنج باسماتی", cat: "grain", sodium100: 1, potassium100: 35, calcium100: 10, iron100: 0.4, vitC100: 0, magnesium100: 12, zinc100: 0.5, vitA100: 0, vitB12_100: 0, folate100: 3, gi: 58, carbs100: 27, sugar100: 0.1, fiber100: 0.5, soluble100: 0.15, insoluble100: 0.35, protein100: 2.7, fat100: 0.3, satFat100: 0.1, mono100: 0.1, poly100: 0.1, fdaG: 150, fdaLabel: "150g · ~1 cup cooked", fdaLabelFa: "۱۵۰ گرم · ~۱ لیوان پخته", ttp: 55 },
+  { id: "mushroom", name: "Mushroom (cooked)", nameFa: "قارچ پخته", cat: "veg", sodium100: 5, potassium100: 356, calcium100: 3, iron100: 0.6, vitC100: 0, magnesium100: 9, zinc100: 0.6, vitA100: 0, vitB12_100: 0, folate100: 17, gi: 15, carbs100: 3.3, sugar100: 1.7, fiber100: 1, soluble100: 0.3, insoluble100: 0.7, protein100: 3.1, fat100: 0.3, satFat100: 0.05, mono100: 0.02, poly100: 0.23, fdaG: 86, fdaLabel: "86g · 1 cup", fdaLabelFa: "۸۶ گرم · ۱ لیوان", ttp: 40 },
+  { id: "spinach", name: "Spinach (cooked)", nameFa: "اسفناج پخته", cat: "veg", sodium100: 70, potassium100: 466, calcium100: 136, iron100: 3.6, vitC100: 10, magnesium100: 87, zinc100: 0.8, vitA100: 469, vitB12_100: 0, folate100: 146, gi: 15, carbs100: 3.8, sugar100: 0.4, fiber100: 2.4, soluble100: 0.8, insoluble100: 1.6, protein100: 3, fat100: 0.3, satFat100: 0.05, mono100: 0.02, poly100: 0.23, fdaG: 180, fdaLabel: "180g · 1 cup", fdaLabelFa: "۱۸۰ گرم · ۱ لیوان", ttp: 40 },
+  { id: "kale", name: "Kale (cooked)", nameFa: "کیل پخته", cat: "veg", sodium100: 29, potassium100: 348, calcium100: 150, iron100: 1.2, vitC100: 41, magnesium100: 23, zinc100: 0.3, vitA100: 443, vitB12_100: 0, folate100: 17, gi: 15, carbs100: 5.9, sugar100: 1.2, fiber100: 3.6, soluble100: 1, insoluble100: 2.6, protein100: 2.5, fat100: 0.5, satFat100: 0.07, mono100: 0.03, poly100: 0.4, fdaG: 130, fdaLabel: "130g · 1 cup", fdaLabelFa: "۱۳۰ گرم · ۱ لیوان", ttp: 40 },
+  { id: "turkey-breast", name: "Turkey breast (cooked)", nameFa: "سینه بوقلمون", cat: "protein", sodium100: 55, potassium100: 250, calcium100: 15, iron100: 1.1, vitC100: 0, magnesium100: 26, zinc100: 1.4, vitA100: 0, vitB12_100: 0.3, folate100: 6, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 29, fat100: 1, satFat100: 0.3, mono100: 0.2, poly100: 0.5, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "pork-chop", name: "Pork chop (cooked)", nameFa: "گوشت خوک", cat: "protein", sodium100: 55, potassium100: 350, calcium100: 10, iron100: 0.8, vitC100: 0.5, magnesium100: 22, zinc100: 2, vitA100: 2, vitB12_100: 0.8, folate100: 5, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 27, fat100: 14, satFat100: 4.5, mono100: 6.5, poly100: 3, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "shrimp", name: "Shrimp (cooked)", nameFa: "میگو", cat: "protein", sodium100: 111, potassium100: 259, calcium100: 70, iron100: 0.5, vitC100: 0, magnesium100: 29, zinc100: 1.3, vitA100: 0, vitB12_100: 1.3, folate100: 3, gi: 0, carbs100: 0.2, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 24, fat100: 0.3, satFat100: 0.05, mono100: 0.05, poly100: 0.2, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "tempeh", name: "Tempeh", nameFa: "تمپه", cat: "protein", sodium100: 9, potassium100: 412, calcium100: 111, iron100: 2.7, vitC100: 0, magnesium100: 81, zinc100: 1.1, vitA100: 0, vitB12_100: 0.1, folate100: 24, gi: 15, carbs100: 9, sugar100: 0, fiber100: 5, soluble100: 1.5, insoluble100: 3.5, protein100: 19, fat100: 11, satFat100: 2.3, mono100: 2.7, poly100: 6, fdaG: 100, fdaLabel: "100g · ~1/2 cup", fdaLabelFa: "۱۰۰ گرم · ~نصف لیوان", ttp: 70 },
+  { id: "labneh", name: "Labneh", nameFa: "لبنه", cat: "fat", sodium100: 100, potassium100: 150, calcium100: 150, iron100: 0.1, vitC100: 0, magnesium100: 8, zinc100: 0.5, vitA100: 35, vitB12_100: 0.3, folate100: 5, gi: 35, carbs100: 4, sugar100: 4, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 7, fat100: 9, satFat100: 5.7, mono100: 2.5, poly100: 0.8, fdaG: 50, fdaLabel: "50g · 2 tbsp", fdaLabelFa: "۵۰ گرم · ۲ قاشق غذاخوری", ttp: 50 },
+  { id: "cream-cheese", name: "Cream cheese", nameFa: "پنیر خامه‌ای", cat: "fat", sodium100: 321, potassium100: 110, calcium100: 98, iron100: 0.4, vitC100: 0, magnesium100: 5, zinc100: 0.5, vitA100: 365, vitB12_100: 0.2, folate100: 14, gi: 15, carbs100: 4, sugar100: 3.2, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 6, fat100: 34, satFat100: 21, mono100: 9, poly100: 4, fdaG: 28, fdaLabel: "28g · 2 tbsp", fdaLabelFa: "۲۸ گرم · ۲ قاشق غذاخوری", ttp: 55 },
+  { id: "whole-wheat-pasta", name: "Whole wheat pasta", nameFa: "پاستا سبوس‌دار", cat: "grain", sodium100: 3, potassium100: 62, calcium100: 12, iron100: 1.1, vitC100: 0, magnesium100: 27, zinc100: 0.9, vitA100: 0, vitB12_100: 0, folate100: 4, gi: 48, carbs100: 23, sugar100: 0.6, fiber100: 4, soluble100: 1.4, insoluble100: 2.6, protein100: 5.3, fat100: 1.4, satFat100: 0.2, mono100: 0.2, poly100: 1, fdaG: 140, fdaLabel: "140g · ~1.5 cups cooked", fdaLabelFa: "۱۴۰ گرم · ~۱.۵ لیوان پخته", ttp: 50 },
+  { id: "lentils", name: "Lentils (cooked)", nameFa: "عدس پخته", cat: "legume", sodium100: 2, potassium100: 369, calcium100: 19, iron100: 3.3, vitC100: 1.5, magnesium100: 36, zinc100: 1.3, vitA100: 0, vitB12_100: 0, folate100: 181, gi: 32, carbs100: 18, sugar100: 1.5, fiber100: 5, soluble100: 2, insoluble100: 3, protein100: 9, fat100: 0.4, satFat100: 0.05, mono100: 0.05, poly100: 0.3, fdaG: 100, fdaLabel: "100g · ~1/2 cup", fdaLabelFa: "۱۰۰ گرم · ~نصف لیوان", ttp: 90 },
+  { id: "tahchin", name: "Tahchin (saffron rice cake)", nameFa: "ته‌چین", cat: "grain", sodium100: 250, potassium100: 150, calcium100: 60, iron100: 1, vitC100: 0, magnesium100: 15, zinc100: 0.8, vitA100: 30, vitB12_100: 0.3, folate100: 10, gi: 65, carbs100: 28, sugar100: 2, fiber100: 0.5, soluble100: 0.15, insoluble100: 0.35, protein100: 10, fat100: 9, satFat100: 3, mono100: 4, poly100: 2, fdaG: 180, fdaLabel: "180g · 1 piece", fdaLabelFa: "۱۸۰ گرم · ۱ تکه", ttp: 55 },
+  { id: "baghali-polo", name: "Baghali polo (fava bean rice)", nameFa: "باقالی پلو", cat: "grain", sodium100: 150, potassium100: 200, calcium100: 30, iron100: 1.5, vitC100: 5, magnesium100: 30, zinc100: 0.9, vitA100: 5, vitB12_100: 0, folate100: 40, gi: 60, carbs100: 26, sugar100: 1, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 5, fat100: 3, satFat100: 0.5, mono100: 1.8, poly100: 0.7, fdaG: 180, fdaLabel: "180g · 1 cup", fdaLabelFa: "۱۸۰ گرم · ۱ لیوان", ttp: 55 },
+  { id: "abgoosht", name: "Abgoosht (lamb & bean stew)", nameFa: "آبگوشت", cat: "legume", sodium100: 350, potassium100: 280, calcium100: 30, iron100: 2, vitC100: 3, magnesium100: 25, zinc100: 1.5, vitA100: 5, vitB12_100: 0.8, folate100: 20, gi: 35, carbs100: 9, sugar100: 1, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 11, fat100: 10, satFat100: 4, mono100: 4.5, poly100: 1.5, fdaG: 300, fdaLabel: "300g · 1 bowl", fdaLabelFa: "۳۰۰ گرم · ۱ کاسه", ttp: 75 },
+  { id: "mirza-ghasemi", name: "Mirza ghasemi", nameFa: "میرزاقاسمی", cat: "veg", sodium100: 300, potassium100: 250, calcium100: 30, iron100: 1.2, vitC100: 3, magnesium100: 20, zinc100: 0.6, vitA100: 40, vitB12_100: 0.2, folate100: 15, gi: 30, carbs100: 7, sugar100: 3, fiber100: 3, soluble100: 1, insoluble100: 2, protein100: 5, fat100: 10, satFat100: 2, mono100: 5, poly100: 3, fdaG: 150, fdaLabel: "150g · serving", fdaLabelFa: "۱۵۰ گرم · ۱ سرو", ttp: 55 },
+  { id: "torshi", name: "Torshi (Persian pickles)", nameFa: "ترشی", cat: "veg", sodium100: 800, potassium100: 100, calcium100: 15, iron100: 0.5, vitC100: 5, magnesium100: 5, zinc100: 0.1, vitA100: 5, vitB12_100: 0, folate100: 3, gi: 20, carbs100: 5, sugar100: 2, fiber100: 1.5, soluble100: 0.5, insoluble100: 1, protein100: 0.5, fat100: 0.2, satFat100: 0.05, mono100: 0.05, poly100: 0.1, fdaG: 30, fdaLabel: "30g · 2 tbsp", fdaLabelFa: "۳۰ گرم · ۲ قاشق غذاخوری", ttp: 40 },
+  { id: "sekanjabin", name: "Sekanjabin (mint syrup drink)", nameFa: "سکنجبین", cat: "drink", sodium100: 5, potassium100: 20, calcium100: 5, iron100: 0.1, vitC100: 1, magnesium100: 2, zinc100: 0, vitA100: 0, vitB12_100: 0, folate100: 0, gi: 45, carbs100: 20, sugar100: 19, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 0, fat100: 0, satFat100: 0, mono100: 0, poly100: 0, fdaG: 250, fdaLabel: "250ml · 1 glass (diluted)", fdaLabelFa: "۲۵۰ میلی‌لیتر · ۱ لیوان رقیق‌شده", ttp: 35 },
+  // More fruits, vegetables, grains, proteins, dairy, nuts & drinks
+  { id: "pear", name: "Pear", nameFa: "گلابی", cat: "fruit", sodium100: 1, potassium100: 116, calcium100: 9, iron100: 0.2, vitC100: 4.3, magnesium100: 7, zinc100: 0.1, vitA100: 1, vitB12_100: 0, folate100: 7, gi: 38, carbs100: 12.3, sugar100: 9.8, fiber100: 3.1, soluble100: 1.2, insoluble100: 1.9, protein100: 0.4, fat100: 0.1, satFat100: 0, mono100: 0.02, poly100: 0.08, fdaG: 166, fdaLabel: "166g · 1 medium", fdaLabelFa: "۱۶۶ گرم · ۱ عدد متوسط", ttp: 45 },
+  { id: "cherries", name: "Cherries", nameFa: "گیلاس/آلبالو", cat: "fruit", sodium100: 0, potassium100: 222, calcium100: 13, iron100: 0.4, vitC100: 7, magnesium100: 11, zinc100: 0.1, vitA100: 3, vitB12_100: 0, folate100: 4, gi: 22, carbs100: 14, sugar100: 13, fiber100: 2.1, soluble100: 0.8, insoluble100: 1.3, protein100: 1.1, fat100: 0.2, satFat100: 0.04, mono100: 0.05, poly100: 0.06, fdaG: 138, fdaLabel: "138g · 1 cup", fdaLabelFa: "۱۳۸ گرم · ۱ لیوان", ttp: 40 },
+  { id: "kiwi", name: "Kiwi", nameFa: "کیوی", cat: "fruit", sodium100: 3, potassium100: 312, calcium100: 34, iron100: 0.3, vitC100: 93, magnesium100: 17, zinc100: 0.1, vitA100: 4, vitB12_100: 0, folate100: 25, gi: 39, carbs100: 12, sugar100: 9, fiber100: 3, soluble100: 1.2, insoluble100: 1.8, protein100: 1.1, fat100: 0.5, satFat100: 0.03, mono100: 0.05, poly100: 0.3, fdaG: 138, fdaLabel: "138g · 2 medium", fdaLabelFa: "۱۳۸ گرم · ۲ عدد", ttp: 40 },
+  { id: "asparagus", name: "Asparagus (cooked)", nameFa: "مارچوبه پخته", cat: "veg", sodium100: 14, potassium100: 224, calcium100: 24, iron100: 1.1, vitC100: 7.7, magnesium100: 14, zinc100: 0.5, vitA100: 38, vitB12_100: 0, folate100: 52, gi: 15, carbs100: 2.4, sugar100: 1.3, fiber100: 2, soluble100: 0.7, insoluble100: 1.3, protein100: 2.4, fat100: 0.2, satFat100: 0.04, mono100: 0.02, poly100: 0.14, fdaG: 90, fdaLabel: "90g · 1 cup", fdaLabelFa: "۹۰ گرم · ۱ لیوان", ttp: 40 },
+  { id: "green-beans", name: "Green beans (cooked)", nameFa: "لوبیا سبز پخته", cat: "veg", sodium100: 3, potassium100: 151, calcium100: 37, iron100: 1, vitC100: 9.7, magnesium100: 21, zinc100: 0.3, vitA100: 35, vitB12_100: 0, folate100: 33, gi: 30, carbs100: 4.9, sugar100: 1.4, fiber100: 2.7, soluble100: 1, insoluble100: 1.7, protein100: 1.8, fat100: 0.3, satFat100: 0.05, mono100: 0.02, poly100: 0.23, fdaG: 125, fdaLabel: "125g · 1 cup", fdaLabelFa: "۱۲۵ گرم · ۱ لیوان", ttp: 40 },
+  { id: "peas", name: "Green peas (cooked)", nameFa: "نخود فرنگی پخته", cat: "veg", sodium100: 3, potassium100: 244, calcium100: 27, iron100: 1.5, vitC100: 14.2, magnesium100: 29, zinc100: 1, vitA100: 38, vitB12_100: 0, folate100: 42, gi: 51, carbs100: 11, sugar100: 4.2, fiber100: 5, soluble100: 1.8, insoluble100: 3.2, protein100: 5.4, fat100: 0.3, satFat100: 0.05, mono100: 0.05, poly100: 0.2, fdaG: 160, fdaLabel: "160g · 1 cup", fdaLabelFa: "۱۶۰ گرم · ۱ لیوان", ttp: 55 },
+  { id: "bulgur", name: "Bulgur (cooked)", nameFa: "بلغور گندم پخته", cat: "grain", sodium100: 5, potassium100: 68, calcium100: 10, iron100: 1, vitC100: 0, magnesium100: 27, zinc100: 0.6, vitA100: 0, vitB12_100: 0, folate100: 24, gi: 48, carbs100: 19, sugar100: 0.2, fiber100: 4.5, soluble100: 1.5, insoluble100: 3, protein100: 3.4, fat100: 0.2, satFat100: 0.03, mono100: 0.03, poly100: 0.14, fdaG: 182, fdaLabel: "182g · 1 cup", fdaLabelFa: "۱۸۲ گرم · ۱ لیوان", ttp: 55 },
+  { id: "rye-bread", name: "Rye bread", nameFa: "نان چاودار", cat: "grain", sodium100: 470, potassium100: 170, calcium100: 70, iron100: 2.5, vitC100: 0, magnesium100: 40, zinc100: 1.2, vitA100: 0, vitB12_100: 0, folate100: 40, gi: 55, carbs100: 48, sugar100: 4, fiber100: 6, soluble100: 2, insoluble100: 4, protein100: 9, fat100: 1.5, satFat100: 0.2, mono100: 0.4, poly100: 0.9, fdaG: 50, fdaLabel: "50g · ~2 slices", fdaLabelFa: "۵۰ گرم · ~۲ برش", ttp: 45 },
+  { id: "farro", name: "Farro (cooked)", nameFa: "فارو پخته", cat: "grain", sodium100: 4, potassium100: 100, calcium100: 15, iron100: 1.5, vitC100: 0, magnesium100: 30, zinc100: 1, vitA100: 0, vitB12_100: 0, folate100: 20, gi: 45, carbs100: 26, sugar100: 0.5, fiber100: 4, soluble100: 1.4, insoluble100: 2.6, protein100: 5.5, fat100: 1, satFat100: 0.15, mono100: 0.15, poly100: 0.7, fdaG: 170, fdaLabel: "170g · 1 cup", fdaLabelFa: "۱۷۰ گرم · ۱ لیوان", ttp: 60 },
+  { id: "cod", name: "Cod (cooked)", nameFa: "ماهی کاد", cat: "protein", sodium100: 78, potassium100: 244, calcium100: 16, iron100: 0.4, vitC100: 0, magnesium100: 32, zinc100: 0.5, vitA100: 13, vitB12_100: 1, folate100: 7, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 23, fat100: 0.7, satFat100: 0.1, mono100: 0.1, poly100: 0.5, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "duck", name: "Duck (cooked)", nameFa: "گوشت اردک", cat: "protein", sodium100: 65, potassium100: 260, calcium100: 11, iron100: 2.7, vitC100: 0, magnesium100: 16, zinc100: 1.9, vitA100: 0, vitB12_100: 0.4, folate100: 5, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 19, fat100: 28, satFat100: 9.7, mono100: 12.9, poly100: 5.4, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "parmesan", name: "Parmesan", nameFa: "پارمسان", cat: "fat", sodium100: 1530, potassium100: 100, calcium100: 1180, iron100: 0.8, vitC100: 0, magnesium100: 44, zinc100: 2.75, vitA100: 0, vitB12_100: 0.9, folate100: 7, gi: 0, carbs100: 4, sugar100: 0.9, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 38, fat100: 29, satFat100: 19, mono100: 9.2, poly100: 0.8, fdaG: 28, fdaLabel: "28g · 2 tbsp grated", fdaLabelFa: "۲۸ گرم · ۲ قاشق رنده‌شده", ttp: 55 },
+  { id: "mozzarella", name: "Mozzarella", nameFa: "موزارلا", cat: "fat", sodium100: 486, potassium100: 95, calcium100: 505, iron100: 0.4, vitC100: 0, magnesium100: 20, zinc100: 2.9, vitA100: 179, vitB12_100: 1.2, folate100: 9, gi: 0, carbs100: 2.2, sugar100: 1, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 22, fat100: 22, satFat100: 14, mono100: 7.4, poly100: 0.6, fdaG: 28, fdaLabel: "28g · 1oz", fdaLabelFa: "۲۸ گرم · ۱ اونس", ttp: 55 },
+  { id: "ricotta", name: "Ricotta", nameFa: "ریکوتا", cat: "fat", sodium100: 84, potassium100: 105, calcium100: 207, iron100: 0.4, vitC100: 0, magnesium100: 11, zinc100: 1.2, vitA100: 120, vitB12_100: 0.3, folate100: 12, gi: 0, carbs100: 3, sugar100: 0.3, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 11, fat100: 13, satFat100: 8.3, mono100: 4.3, poly100: 0.4, fdaG: 62, fdaLabel: "62g · 1/4 cup", fdaLabelFa: "۶۲ گرم · یک‌چهارم لیوان", ttp: 55 },
+  { id: "cashews", name: "Cashews", nameFa: "بادام هندی", cat: "fat", sodium100: 12, potassium100: 565, calcium100: 37, iron100: 6.7, vitC100: 0.5, magnesium100: 292, zinc100: 5.6, vitA100: 0, vitB12_100: 0, folate100: 25, gi: 22, carbs100: 24, sugar100: 6, fiber100: 3.3, soluble100: 1, insoluble100: 2.3, protein100: 18, fat100: 44, satFat100: 7.8, mono100: 28.4, poly100: 7.8, fdaG: 28, fdaLabel: "28g · ~18 nuts", fdaLabelFa: "۲۸ گرم · ~۱۸ عدد", ttp: 60 },
+  { id: "pecans", name: "Pecans", nameFa: "پکان", cat: "fat", sodium100: 0, potassium100: 410, calcium100: 70, iron100: 2.5, vitC100: 1.1, magnesium100: 121, zinc100: 4.5, vitA100: 0, vitB12_100: 0, folate100: 22, gi: 10, carbs100: 4, sugar100: 4, fiber100: 9.6, soluble100: 3, insoluble100: 6.6, protein100: 9, fat100: 72, satFat100: 6.2, mono100: 44.2, poly100: 21.6, fdaG: 28, fdaLabel: "28g · ~19 halves", fdaLabelFa: "۲۸ گرم · ~۱۹ نیمه", ttp: 60 },
+  { id: "maple-syrup", name: "Maple syrup", nameFa: "شربت افرا", cat: "sweet", sodium100: 12, potassium100: 212, calcium100: 102, iron100: 0.1, vitC100: 0, magnesium100: 21, zinc100: 1.5, vitA100: 0, vitB12_100: 0, folate100: 0, gi: 54, carbs100: 67, sugar100: 60, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 0, fat100: 0, satFat100: 0, mono100: 0, poly100: 0, fdaG: 20, fdaLabel: "20g · 1 tbsp", fdaLabelFa: "۲۰ گرم · ۱ قاشق غذاخوری", ttp: 35 },
+  { id: "almond-milk", name: "Almond milk (unsweetened)", nameFa: "شیر بادام (بدون شکر)", cat: "drink", sodium100: 30, potassium100: 20, calcium100: 184, iron100: 0.3, vitC100: 0, magnesium100: 6, zinc100: 0.1, vitA100: 20, vitB12_100: 0.3, folate100: 0, gi: 25, carbs100: 0.6, sugar100: 0.3, fiber100: 0.4, soluble100: 0.1, insoluble100: 0.3, protein100: 0.6, fat100: 1.2, satFat100: 0.1, mono100: 0.7, poly100: 0.4, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 35 },
+  { id: "soy-milk", name: "Soy milk (unsweetened)", nameFa: "شیر سویا (بدون شکر)", cat: "drink", sodium100: 45, potassium100: 150, calcium100: 25, iron100: 0.6, vitC100: 0, magnesium100: 18, zinc100: 0.3, vitA100: 0, vitB12_100: 0.5, folate100: 0, gi: 30, carbs100: 1, sugar100: 0.5, fiber100: 0.6, soluble100: 0.2, insoluble100: 0.4, protein100: 3.3, fat100: 1.8, satFat100: 0.2, mono100: 0.4, poly100: 1.2, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 40 },
+  // More vegetables, legumes, grains, protein alternatives & drinks
+  { id: "cabbage", name: "Cabbage (cooked)", nameFa: "کلم پخته", cat: "veg", sodium100: 8, potassium100: 136, calcium100: 36, iron100: 0.3, vitC100: 30, magnesium100: 12, zinc100: 0.2, vitA100: 5, vitB12_100: 0, folate100: 19, gi: 15, carbs100: 3.2, sugar100: 1.9, fiber100: 2, soluble100: 0.7, insoluble100: 1.3, protein100: 1, fat100: 0.1, satFat100: 0.02, mono100: 0.02, poly100: 0.06, fdaG: 75, fdaLabel: "75g · 1 cup", fdaLabelFa: "۷۵ گرم · ۱ لیوان", ttp: 40 },
+  { id: "celery", name: "Celery", nameFa: "کرفس", cat: "veg", sodium100: 64, potassium100: 260, calcium100: 32, iron100: 0.2, vitC100: 3.1, magnesium100: 9, zinc100: 0.1, vitA100: 22, vitB12_100: 0, folate100: 29, gi: 15, carbs100: 1.4, sugar100: 1.3, fiber100: 1.2, soluble100: 0.4, insoluble100: 0.8, protein100: 0.5, fat100: 0.1, satFat100: 0.02, mono100: 0.01, poly100: 0.07, fdaG: 100, fdaLabel: "100g · 1 cup", fdaLabelFa: "۱۰۰ گرم · ۱ لیوان", ttp: 35 },
+  { id: "beetroot", name: "Beetroot (cooked)", nameFa: "چغندر پخته", cat: "veg", sodium100: 64, potassium100: 305, calcium100: 16, iron100: 0.8, vitC100: 3.6, magnesium100: 23, zinc100: 0.4, vitA100: 2, vitB12_100: 0, folate100: 80, gi: 64, carbs100: 8, sugar100: 6.8, fiber100: 2, soluble100: 0.6, insoluble100: 1.4, protein100: 1.6, fat100: 0.2, satFat100: 0.03, mono100: 0.03, poly100: 0.14, fdaG: 85, fdaLabel: "85g · 1/2 cup", fdaLabelFa: "۸۵ گرم · نصف لیوان", ttp: 45 },
+  { id: "artichoke", name: "Artichoke (cooked)", nameFa: "کنگر فرنگی پخته", cat: "veg", sodium100: 94, potassium100: 286, calcium100: 21, iron100: 0.6, vitC100: 7.4, magnesium100: 42, zinc100: 0.4, vitA100: 1, vitB12_100: 0, folate100: 68, gi: 15, carbs100: 6, sugar100: 1, fiber100: 5.4, soluble100: 2, insoluble100: 3.4, protein100: 3.3, fat100: 0.2, satFat100: 0.05, mono100: 0.01, poly100: 0.14, fdaG: 120, fdaLabel: "120g · 1 medium", fdaLabelFa: "۱۲۰ گرم · ۱ عدد متوسط", ttp: 45 },
+  { id: "okra", name: "Okra (cooked)", nameFa: "بامیه پخته", cat: "veg", sodium100: 8, potassium100: 299, calcium100: 82, iron100: 0.4, vitC100: 23, magnesium100: 57, zinc100: 0.7, vitA100: 36, vitB12_100: 0, folate100: 60, gi: 20, carbs100: 4.3, sugar100: 1.5, fiber100: 3.2, soluble100: 1.2, insoluble100: 2, protein100: 2, fat100: 0.2, satFat100: 0.05, mono100: 0.02, poly100: 0.13, fdaG: 100, fdaLabel: "100g · 1 cup", fdaLabelFa: "۱۰۰ گرم · ۱ لیوان", ttp: 40 },
+  { id: "radish", name: "Radish", nameFa: "تربچه", cat: "veg", sodium100: 39, potassium100: 233, calcium100: 25, iron100: 0.3, vitC100: 14.8, magnesium100: 10, zinc100: 0.3, vitA100: 0, vitB12_100: 0, folate100: 25, gi: 15, carbs100: 2, sugar100: 1.9, fiber100: 1.6, soluble100: 0.5, insoluble100: 1.1, protein100: 0.7, fat100: 0.1, satFat100: 0.02, mono100: 0.02, poly100: 0.06, fdaG: 116, fdaLabel: "116g · 1 cup", fdaLabelFa: "۱۱۶ گرم · ۱ لیوان", ttp: 35 },
+  { id: "black-eyed-peas", name: "Black-eyed peas (cooked)", nameFa: "لوبیا چشم‌بلبلی", cat: "legume", sodium100: 4, potassium100: 278, calcium100: 24, iron100: 2.5, vitC100: 0.8, magnesium100: 53, zinc100: 1.3, vitA100: 1, vitB12_100: 0, folate100: 208, gi: 42, carbs100: 18, sugar100: 3, fiber100: 6, soluble100: 2.2, insoluble100: 3.8, protein100: 8, fat100: 0.5, satFat100: 0.1, mono100: 0.05, poly100: 0.35, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 90 },
+  { id: "pinto-beans", name: "Pinto beans (cooked)", nameFa: "لوبیا پینتو", cat: "legume", sodium100: 1, potassium100: 436, calcium100: 46, iron100: 2.1, vitC100: 1.4, magnesium100: 45, zinc100: 1, vitA100: 0, vitB12_100: 0, folate100: 172, gi: 39, carbs100: 26, sugar100: 0.3, fiber100: 9, soluble100: 3, insoluble100: 6, protein100: 9, fat100: 0.7, satFat100: 0.1, mono100: 0.1, poly100: 0.5, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 95 },
+  { id: "millet", name: "Millet (cooked)", nameFa: "ارزن پخته", cat: "grain", sodium100: 2, potassium100: 62, calcium100: 3, iron100: 0.6, vitC100: 0, magnesium100: 38, zinc100: 0.9, vitA100: 0, vitB12_100: 0, folate100: 19, gi: 67, carbs100: 20, sugar100: 0.2, fiber100: 1.6, soluble100: 0.5, insoluble100: 1.1, protein100: 3.5, fat100: 1, satFat100: 0.2, mono100: 0.2, poly100: 0.6, fdaG: 174, fdaLabel: "174g · 1 cup", fdaLabelFa: "۱۷۴ گرم · ۱ لیوان", ttp: 55 },
+  { id: "amaranth", name: "Amaranth (cooked)", nameFa: "تاج خروس پخته", cat: "grain", sodium100: 3, potassium100: 135, calcium100: 47, iron100: 2.1, vitC100: 0, magnesium100: 65, zinc100: 0.9, vitA100: 0, vitB12_100: 0, folate100: 27, gi: 35, carbs100: 19, sugar100: 0.3, fiber100: 2.5, soluble100: 0.8, insoluble100: 1.7, protein100: 4, fat100: 1.6, satFat100: 0.4, mono100: 0.4, poly100: 0.8, fdaG: 246, fdaLabel: "246g · 1 cup", fdaLabelFa: "۲۴۶ گرم · ۱ لیوان", ttp: 55 },
+  { id: "wild-rice", name: "Wild rice (cooked)", nameFa: "برنج وحشی پخته", cat: "grain", sodium100: 3, potassium100: 101, calcium100: 3, iron100: 0.6, vitC100: 0, magnesium100: 32, zinc100: 1.3, vitA100: 0, vitB12_100: 0, folate100: 26, gi: 57, carbs100: 21, sugar100: 1.2, fiber100: 1.8, soluble100: 0.5, insoluble100: 1.3, protein100: 4, fat100: 0.3, satFat100: 0.05, mono100: 0.05, poly100: 0.2, fdaG: 164, fdaLabel: "164g · 1 cup", fdaLabelFa: "۱۶۴ گرم · ۱ لیوان", ttp: 55 },
+  { id: "pita-bread", name: "Pita bread", nameFa: "نان پیتا", cat: "grain", sodium100: 450, potassium100: 105, calcium100: 54, iron100: 1.6, vitC100: 0, magnesium100: 24, zinc100: 0.7, vitA100: 0, vitB12_100: 0, folate100: 40, gi: 57, carbs100: 55, sugar100: 2, fiber100: 2.5, soluble100: 0.8, insoluble100: 1.7, protein100: 9, fat100: 1.2, satFat100: 0.2, mono100: 0.2, poly100: 0.8, fdaG: 60, fdaLabel: "60g · 1 pita", fdaLabelFa: "۶۰ گرم · ۱ عدد", ttp: 40 },
+  { id: "naan-bread", name: "Naan bread", nameFa: "نان نان", cat: "grain", sodium100: 430, potassium100: 110, calcium100: 70, iron100: 1.8, vitC100: 0, magnesium100: 20, zinc100: 0.7, vitA100: 10, vitB12_100: 0, folate100: 35, gi: 71, carbs100: 50, sugar100: 4, fiber100: 2, soluble100: 0.6, insoluble100: 1.4, protein100: 9, fat100: 6, satFat100: 1.3, mono100: 2.9, poly100: 1.8, fdaG: 90, fdaLabel: "90g · 1 piece", fdaLabelFa: "۹۰ گرم · ۱ عدد", ttp: 40 },
+  { id: "seitan", name: "Seitan (cooked)", nameFa: "سیتان", cat: "protein", sodium100: 200, potassium100: 70, calcium100: 25, iron100: 1.7, vitC100: 0, magnesium100: 13, zinc100: 0.7, vitA100: 0, vitB12_100: 0, folate100: 5, gi: 35, carbs100: 4, sugar100: 0.5, fiber100: 0.6, soluble100: 0.2, insoluble100: 0.4, protein100: 25, fat100: 1.9, satFat100: 0.3, mono100: 0.3, poly100: 1.3, fdaG: 85, fdaLabel: "85g · ~3oz", fdaLabelFa: "۸۵ گرم · ~۳ اونس", ttp: 55 },
+  { id: "jackfruit", name: "Jackfruit (ripe)", nameFa: "جک‌فروت رسیده", cat: "fruit", sodium100: 2, potassium100: 448, calcium100: 24, iron100: 0.6, vitC100: 13.7, magnesium100: 29, zinc100: 0.4, vitA100: 5, vitB12_100: 0, folate100: 24, gi: 75, carbs100: 23, sugar100: 19, fiber100: 1.5, soluble100: 0.5, insoluble100: 1, protein100: 1.7, fat100: 0.3, satFat100: 0.05, mono100: 0.05, poly100: 0.2, fdaG: 150, fdaLabel: "150g · 1 cup", fdaLabelFa: "۱۵۰ گرم · ۱ لیوان", ttp: 45 },
+  { id: "tahini", name: "Tahini", nameFa: "ارده", cat: "fat", sodium100: 115, potassium100: 414, calcium100: 426, iron100: 4.2, vitC100: 0, magnesium100: 95, zinc100: 4.6, vitA100: 0, vitB12_100: 0, folate100: 98, gi: 15, carbs100: 12, sugar100: 0.5, fiber100: 9, soluble100: 3, insoluble100: 6, protein100: 17, fat100: 54, satFat100: 7.6, mono100: 23, poly100: 23.4, fdaG: 15, fdaLabel: "15g · 1 tbsp", fdaLabelFa: "۱۵ گرم · ۱ قاشق غذاخوری", ttp: 60 },
+  { id: "coconut-milk", name: "Coconut milk (canned)", nameFa: "شیر نارگیل", cat: "drink", sodium100: 15, potassium100: 263, calcium100: 16, iron100: 1.6, vitC100: 1.5, magnesium100: 37, zinc100: 0.7, vitA100: 0, vitB12_100: 0, folate100: 16, gi: 40, carbs100: 3.3, sugar100: 3.3, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 2.3, fat100: 24, satFat100: 21, mono100: 2.7, poly100: 0.3, fdaG: 60, fdaLabel: "60ml · 1/4 cup", fdaLabelFa: "۶۰ میلی‌لیتر · یک‌چهارم لیوان", ttp: 55 },
+  { id: "oat-milk", name: "Oat milk (unsweetened)", nameFa: "شیر جو دوسر (بدون شکر)", cat: "drink", sodium100: 60, potassium100: 100, calcium100: 120, iron100: 0.6, vitC100: 0, magnesium100: 8, zinc100: 0.2, vitA100: 20, vitB12_100: 0.3, folate100: 0, gi: 40, carbs100: 6.7, sugar100: 4.1, fiber100: 0.8, soluble100: 0.4, insoluble100: 0.4, protein100: 1, fat100: 1.5, satFat100: 0.2, mono100: 0.4, poly100: 0.9, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 40 },
+  { id: "rice-milk", name: "Rice milk (unsweetened)", nameFa: "شیر برنج (بدون شکر)", cat: "drink", sodium100: 40, potassium100: 27, calcium100: 120, iron100: 0.2, vitC100: 0, magnesium100: 4, zinc100: 0.1, vitA100: 0, vitB12_100: 0.3, folate100: 0, gi: 79, carbs100: 9.2, sugar100: 4, fiber100: 0.3, soluble100: 0.1, insoluble100: 0.2, protein100: 0.3, fat100: 1, satFat100: 0.1, mono100: 0.3, poly100: 0.6, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 35 },
+  // More fruits, vegetables, legumes, grains, protein & dairy/drinks
+  { id: "papaya", name: "Papaya", nameFa: "پاپایا", cat: "fruit", sodium100: 3, potassium100: 257, calcium100: 24, iron100: 0.3, vitC100: 61, magnesium100: 10, zinc100: 0.1, vitA100: 55, vitB12_100: 0, folate100: 38, gi: 60, carbs100: 10, sugar100: 8, fiber100: 1.8, soluble100: 0.7, insoluble100: 1.1, protein100: 0.5, fat100: 0.3, satFat100: 0.09, mono100: 0.07, poly100: 0.14, fdaG: 145, fdaLabel: "145g · 1 cup", fdaLabelFa: "۱۴۵ گرم · ۱ لیوان", ttp: 40 },
+  { id: "guava", name: "Guava", nameFa: "گواوا", cat: "fruit", sodium100: 2, potassium100: 417, calcium100: 18, iron100: 0.3, vitC100: 228, magnesium100: 22, zinc100: 0.2, vitA100: 31, vitB12_100: 0, folate100: 49, gi: 40, carbs100: 9, sugar100: 9, fiber100: 5, soluble100: 1.8, insoluble100: 3.2, protein100: 2.6, fat100: 1, satFat100: 0.3, mono100: 0.1, poly100: 0.6, fdaG: 165, fdaLabel: "165g · 1 cup", fdaLabelFa: "۱۶۵ گرم · ۱ لیوان", ttp: 45 },
+  { id: "blueberries", name: "Blueberries", nameFa: "بلوبری", cat: "fruit", sodium100: 1, potassium100: 77, calcium100: 6, iron100: 0.3, vitC100: 9.7, magnesium100: 6, zinc100: 0.2, vitA100: 3, vitB12_100: 0, folate100: 6, gi: 53, carbs100: 12, sugar100: 10, fiber100: 2.4, soluble100: 0.9, insoluble100: 1.5, protein100: 0.7, fat100: 0.3, satFat100: 0.03, mono100: 0.05, poly100: 0.22, fdaG: 148, fdaLabel: "148g · 1 cup", fdaLabelFa: "۱۴۸ گرم · ۱ لیوان", ttp: 40 },
+  { id: "raspberries", name: "Raspberries", nameFa: "تمشک", cat: "fruit", sodium100: 1, potassium100: 151, calcium100: 25, iron100: 0.7, vitC100: 26.2, magnesium100: 22, zinc100: 0.4, vitA100: 1, vitB12_100: 0, folate100: 21, gi: 32, carbs100: 5.4, sugar100: 4.4, fiber100: 6.5, soluble100: 2, insoluble100: 4.5, protein100: 1.2, fat100: 0.7, satFat100: 0.02, mono100: 0.06, poly100: 0.62, fdaG: 123, fdaLabel: "123g · 1 cup", fdaLabelFa: "۱۲۳ گرم · ۱ لیوان", ttp: 40 },
+  { id: "apricot", name: "Apricot", nameFa: "زردآلو", cat: "fruit", sodium100: 1, potassium100: 259, calcium100: 13, iron100: 0.4, vitC100: 10, magnesium100: 10, zinc100: 0.2, vitA100: 96, vitB12_100: 0, folate100: 9, gi: 34, carbs100: 9, sugar100: 9, fiber100: 2, soluble100: 0.8, insoluble100: 1.2, protein100: 1.4, fat100: 0.4, satFat100: 0.03, mono100: 0.2, poly100: 0.17, fdaG: 105, fdaLabel: "105g · 3 medium", fdaLabelFa: "۱۰۵ گرم · ۳ عدد", ttp: 40 },
+  { id: "plum", name: "Plum", nameFa: "آلو", cat: "fruit", sodium100: 0, potassium100: 157, calcium100: 6, iron100: 0.2, vitC100: 9.5, magnesium100: 7, zinc100: 0.1, vitA100: 17, vitB12_100: 0, folate100: 5, gi: 40, carbs100: 10, sugar100: 9.9, fiber100: 1.4, soluble100: 0.5, insoluble100: 0.9, protein100: 0.7, fat100: 0.3, satFat100: 0.02, mono100: 0.15, poly100: 0.13, fdaG: 151, fdaLabel: "151g · 2 medium", fdaLabelFa: "۱۵۱ گرم · ۲ عدد", ttp: 40 },
+  { id: "cantaloupe", name: "Cantaloupe", nameFa: "طالبی", cat: "fruit", sodium100: 16, potassium100: 267, calcium100: 9, iron100: 0.2, vitC100: 37, magnesium100: 12, zinc100: 0.2, vitA100: 169, vitB12_100: 0, folate100: 21, gi: 65, carbs100: 7.3, sugar100: 7, fiber100: 0.9, soluble100: 0.3, insoluble100: 0.6, protein100: 0.8, fat100: 0.2, satFat100: 0.02, mono100: 0.02, poly100: 0.16, fdaG: 160, fdaLabel: "160g · 1 cup", fdaLabelFa: "۱۶۰ گرم · ۱ لیوان", ttp: 40 },
+  { id: "leek", name: "Leek (cooked)", nameFa: "تره‌فرنگی پخته", cat: "veg", sodium100: 9, potassium100: 160, calcium100: 52, iron100: 1.8, vitC100: 8, magnesium100: 22, zinc100: 0.9, vitA100: 83, vitB12_100: 0, folate100: 53, gi: 15, carbs100: 11, sugar100: 3.5, fiber100: 1.8, soluble100: 0.6, insoluble100: 1.2, protein100: 1.1, fat100: 0.2, satFat100: 0.03, mono100: 0.01, poly100: 0.16, fdaG: 89, fdaLabel: "89g · 1 cup", fdaLabelFa: "۸۹ گرم · ۱ لیوان", ttp: 45 },
+  { id: "turnip", name: "Turnip (cooked)", nameFa: "شلغم پخته", cat: "veg", sodium100: 20, potassium100: 191, calcium100: 30, iron100: 0.2, vitC100: 11, magnesium100: 10, zinc100: 0.2, vitA100: 0, vitB12_100: 0, folate100: 10, gi: 30, carbs100: 4.6, sugar100: 3.5, fiber100: 1.8, soluble100: 0.6, insoluble100: 1.2, protein100: 0.8, fat100: 0.1, satFat100: 0.02, mono100: 0.01, poly100: 0.07, fdaG: 78, fdaLabel: "78g · 1/2 cup", fdaLabelFa: "۷۸ گرم · نصف لیوان", ttp: 40 },
+  { id: "fennel", name: "Fennel", nameFa: "رازیانه", cat: "veg", sodium100: 52, potassium100: 414, calcium100: 49, iron100: 0.7, vitC100: 12, magnesium100: 17, zinc100: 0.2, vitA100: 7, vitB12_100: 0, folate100: 27, gi: 15, carbs100: 5.1, sugar100: 3.9, fiber100: 3.1, soluble100: 1.1, insoluble100: 2, protein100: 1.2, fat100: 0.2, satFat100: 0.03, mono100: 0.08, poly100: 0.09, fdaG: 87, fdaLabel: "87g · 1 cup", fdaLabelFa: "۸۷ گرم · ۱ لیوان", ttp: 40 },
+  { id: "snow-peas", name: "Snow peas (cooked)", nameFa: "نخود فرنگی خوراکی پخته", cat: "veg", sodium100: 4, potassium100: 178, calcium100: 45, iron100: 1.6, vitC100: 38, magnesium100: 21, zinc100: 0.7, vitA100: 37, vitB12_100: 0, folate100: 35, gi: 15, carbs100: 5.6, sugar100: 4, fiber100: 2.6, soluble100: 0.9, insoluble100: 1.7, protein100: 2.8, fat100: 0.2, satFat100: 0.03, mono100: 0.02, poly100: 0.15, fdaG: 80, fdaLabel: "80g · 1 cup", fdaLabelFa: "۸۰ گرم · ۱ لیوان", ttp: 40 },
+  { id: "fava-beans", name: "Fava beans (cooked)", nameFa: "باقالی پخته", cat: "legume", sodium100: 5, potassium100: 268, calcium100: 36, iron100: 1.5, vitC100: 0.6, magnesium100: 43, zinc100: 1, vitA100: 0, vitB12_100: 0, folate100: 104, gi: 40, carbs100: 17, sugar100: 1.8, fiber100: 5.4, soluble100: 2, insoluble100: 3.4, protein100: 7.6, fat100: 0.4, satFat100: 0.06, mono100: 0.06, poly100: 0.28, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 90 },
+  { id: "mung-beans", name: "Mung beans (cooked)", nameFa: "لوبیا ماش پخته", cat: "legume", sodium100: 2, potassium100: 266, calcium100: 27, iron100: 1.4, vitC100: 1, magnesium100: 48, zinc100: 0.8, vitA100: 2, vitB12_100: 0, folate100: 159, gi: 25, carbs100: 19, sugar100: 2, fiber100: 7.6, soluble100: 2.8, insoluble100: 4.8, protein100: 7, fat100: 0.4, satFat100: 0.1, mono100: 0.05, poly100: 0.25, fdaG: 130, fdaLabel: "130g · ~1/2 cup", fdaLabelFa: "۱۳۰ گرم · ~نصف لیوان", ttp: 90 },
+  { id: "sorghum", name: "Sorghum (cooked)", nameFa: "ذرت خوشه‌ای پخته", cat: "grain", sodium100: 2, potassium100: 131, calcium100: 7, iron100: 1.3, vitC100: 0, magnesium100: 0, zinc100: 0, vitA100: 0, vitB12_100: 0, folate100: 0, gi: 63, carbs100: 22, sugar100: 0.5, fiber100: 1.9, soluble100: 0.6, insoluble100: 1.3, protein100: 3.5, fat100: 1.1, satFat100: 0.2, mono100: 0.3, poly100: 0.6, fdaG: 192, fdaLabel: "192g · 1 cup", fdaLabelFa: "۱۹۲ گرم · ۱ لیوان", ttp: 55 },
+  { id: "semolina", name: "Semolina (cooked)", nameFa: "سمولینا پخته", cat: "grain", sodium100: 1, potassium100: 25, calcium100: 4, iron100: 0.5, vitC100: 0, magnesium100: 9, zinc100: 0.3, vitA100: 0, vitB12_100: 0, folate100: 5, gi: 66, carbs100: 14, sugar100: 0.1, fiber100: 0.8, soluble100: 0.3, insoluble100: 0.5, protein100: 3.5, fat100: 0.2, satFat100: 0.03, mono100: 0.02, poly100: 0.15, fdaG: 122, fdaLabel: "122g · 1/2 cup", fdaLabelFa: "۱۲۲ گرم · نصف لیوان", ttp: 50 },
+  { id: "tilapia", name: "Tilapia (cooked)", nameFa: "ماهی تیلاپیا", cat: "protein", sodium100: 56, potassium100: 380, calcium100: 14, iron100: 0.7, vitC100: 0, magnesium100: 34, zinc100: 0.4, vitA100: 0, vitB12_100: 1.9, folate100: 24, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 26, fat100: 2.7, satFat100: 0.9, mono100: 1.1, poly100: 0.7, fdaG: 85, fdaLabel: "85g · 3oz cooked", fdaLabelFa: "۸۵ گرم · ۳ اونس پخته", ttp: 60 },
+  { id: "sardines", name: "Sardines (canned)", nameFa: "ساردین کنسروی", cat: "protein", sodium100: 307, potassium100: 397, calcium100: 382, iron100: 2.9, vitC100: 0, magnesium100: 39, zinc100: 1.3, vitA100: 32, vitB12_100: 8.9, folate100: 10, gi: 0, carbs100: 0, sugar100: 0, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 25, fat100: 11, satFat100: 1.5, mono100: 4.7, poly100: 4.8, fdaG: 85, fdaLabel: "85g · 3oz drained", fdaLabelFa: "۸۵ گرم · ۳ اونس آبکش", ttp: 60 },
+  { id: "swiss-cheese", name: "Swiss cheese", nameFa: "پنیر سوئیسی", cat: "fat", sodium100: 192, potassium100: 77, calcium100: 791, iron100: 0.2, vitC100: 0, magnesium100: 32, zinc100: 4, vitA100: 184, vitB12_100: 2.4, folate100: 10, gi: 0, carbs100: 5.4, sugar100: 1, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 27, fat100: 28, satFat100: 18, mono100: 9.2, poly100: 0.8, fdaG: 28, fdaLabel: "28g · 1oz", fdaLabelFa: "۲۸ گرم · ۱ اونس", ttp: 55 },
+  { id: "brazil-nuts", name: "Brazil nuts", nameFa: "آجیل برزیلی", cat: "fat", sodium100: 3, potassium100: 659, calcium100: 160, iron100: 2.4, vitC100: 0.7, magnesium100: 376, zinc100: 4.1, vitA100: 0, vitB12_100: 0, folate100: 22, gi: 20, carbs100: 4, sugar100: 2.3, fiber100: 7.5, soluble100: 1.5, insoluble100: 6, protein100: 14, fat100: 66, satFat100: 15.1, mono100: 29.8, poly100: 21.1, fdaG: 28, fdaLabel: "28g · ~6 nuts", fdaLabelFa: "۲۸ گرم · ~۶ عدد", ttp: 60 },
+  { id: "macadamia", name: "Macadamia nuts", nameFa: "ماکادمیا", cat: "fat", sodium100: 5, potassium100: 368, calcium100: 85, iron100: 3.7, vitC100: 1.2, magnesium100: 118, zinc100: 1.3, vitA100: 0, vitB12_100: 0, folate100: 11, gi: 10, carbs100: 5, sugar100: 1.5, fiber100: 8.6, soluble100: 2, insoluble100: 6.6, protein100: 8, fat100: 76, satFat100: 12, mono100: 62.4, poly100: 1.6, fdaG: 28, fdaLabel: "28g · ~10-12 nuts", fdaLabelFa: "۲۸ گرم · ~۱۰ تا ۱۲ عدد", ttp: 60 },
+  { id: "coconut-water", name: "Coconut water", nameFa: "آب نارگیل", cat: "drink", sodium100: 105, potassium100: 250, calcium100: 24, iron100: 0.3, vitC100: 2.4, magnesium100: 25, zinc100: 0.1, vitA100: 0, vitB12_100: 0, folate100: 3, gi: 55, carbs100: 3.7, sugar100: 2.6, fiber100: 1.1, soluble100: 0.4, insoluble100: 0.7, protein100: 0.7, fat100: 0.2, satFat100: 0.02, mono100: 0.02, poly100: 0.16, fdaG: 240, fdaLabel: "240ml · 1 cup", fdaLabelFa: "۲۴۰ میلی‌لیتر · ۱ لیوان", ttp: 30 },
+  { id: "kefir", name: "Kefir (plain)", nameFa: "کفیر ساده", cat: "drink", sodium100: 45, potassium100: 140, calcium100: 120, iron100: 0.1, vitC100: 1, magnesium100: 12, zinc100: 0.5, vitA100: 45, vitB12_100: 0.4, folate100: 5, gi: 35, carbs100: 4.5, sugar100: 4.5, fiber100: 0, soluble100: 0, insoluble100: 0, protein100: 3.8, fat100: 2, satFat100: 1.3, mono100: 0.6, poly100: 0.1, fdaG: 245, fdaLabel: "245ml · 1 cup", fdaLabelFa: "۲۴۵ میلی‌لیتر · ۱ لیوان", ttp: 45 },
+];
+function starch(f) {
+  return Math.max(0, f.carbs100 - f.sugar100);
+}
+
+// Golden-angle hue distribution so every food gets a visually distinct color
+// on the response chart, independent of category.
+const FOODS = RAW_FOODS.map((f, i) => ({
+  ...f,
+  color: `hsl(${Math.round((i * 137.508) % 360)}, 68%, 56%)`,
+}));
+
+const FOOD_BY_ID = Object.fromEntries(FOODS.map((f) => [f.id, f]));
+
+const MAX_SELECT = 6;
+const DEFAULT_IDS = ["kabab-koobideh", "chickpeas", "ice-cream", "white-rice", "barley", "wheat-bread"];
+
+const PORTION_MODES = {
+  "100g": { label: "100 g", labelFa: "۱۰۰ گرم" },
+  "50c": { label: "50g carbs", labelFa: "۵۰ گرم کربوهیدرات" },
+  fda: { label: "Typical serving", labelFa: "سرو معمول" },
+};
+
+const MACRO_GROUPS = {
+  carb: { label: "Carb-dominant", labelFa: "غالب کربوهیدرات" },
+  protein: { label: "Protein-dominant", labelFa: "غالب پروتئین" },
+  fat: { label: "Fat-dominant", labelFa: "غالب چربی" },
+  mixed: { label: "Balanced / mixed", labelFa: "متعادل / ترکیبی" },
+};
+
+// Presets can exceed MAX_SELECT — a real dish often needs more than 6
+// ingredients to represent honestly, so applyPreset() does not truncate.
+const PLATE_PRESETS = [
+  { id: "kabab-platter", label: "Kabab platter (quick)", labelFa: "بشقاب کباب (سریع)", foods: ["kabab-koobideh", "tahdig", "sangak", "doogh"] },
+  { id: "koobideh-ingredients", label: "Koobideh platter (by ingredients)", labelFa: "بشقاب کوبیده (بر اساس مواد اولیه)", foods: ["ground-beef", "onion", "tahdig", "sangak", "doogh", "tomato"] },
+  { id: "joojeh-ingredients", label: "Joojeh platter (by ingredients)", labelFa: "بشقاب جوجه (بر اساس مواد اولیه)", foods: ["chicken-thigh", "onion", "white-rice", "lemon-juice", "sangak", "doogh"] },
+  { id: "persian-breakfast", label: "Persian breakfast", labelFa: "صبحانه ایرانی", foods: ["sangak", "feta", "honey", "walnuts"] },
+  { id: "ghormeh-dinner", label: "Ghormeh sabzi dinner (quick)", labelFa: "شام قورمه سبزی (سریع)", foods: ["ghormeh-sabzi", "white-rice", "doogh"] },
+  { id: "ghormeh-ingredients", label: "Ghormeh sabzi (by ingredients)", labelFa: "قورمه سبزی (بر اساس مواد اولیه)", foods: ["lamb", "kidney-beans", "onion", "garlic", "lemon-juice", "white-rice", "parsley"] },
+  { id: "fesenjan-ingredients", label: "Fesenjan (by ingredients)", labelFa: "فسنجان (بر اساس مواد اولیه)", foods: ["chicken-thigh", "walnuts", "pomegranate-molasses", "onion", "white-rice"] },
+  { id: "kashk-bademjan-ingredients", label: "Kashk-e bademjan (by ingredients)", labelFa: "کشک بادمجان (بر اساس مواد اولیه)", foods: ["eggplant", "kashk", "onion", "garlic", "walnuts"] },
+  { id: "falafel-wrap", label: "Falafel wrap", labelFa: "ساندویچ فلافل", foods: ["falafel", "lavash", "hummus", "mast-o-khiar"] },
+  { id: "ash-night", label: "Ash night (quick)", labelFa: "شب آش (سریع)", foods: ["ash-reshteh", "lavash", "doogh"] },
+  { id: "ash-ingredients", label: "Ash reshteh (by ingredients)", labelFa: "آش رشته (بر اساس مواد اولیه)", foods: ["reshteh-noodles", "kidney-beans", "chickpeas", "onion", "kashk", "parsley"] },
+  { id: "zereshk-polo-ingredients", label: "Zereshk polo ba morgh (by ingredients)", labelFa: "زرشک پلو با مرغ (بر اساس مواد اولیه)", foods: ["white-rice", "barberries", "butter", "chicken-thigh"] },
+  { id: "salad-shirazi", label: "Salad Shirazi", labelFa: "سالاد شیرازی", foods: ["tomato", "cucumber", "onion", "lemon-juice"] },
+  { id: "tahchin-platter", label: "Tahchin platter", labelFa: "بشقاب ته‌چین", foods: ["tahchin", "torshi", "doogh"] },
+  { id: "abgoosht-night", label: "Abgoosht night", labelFa: "شب آبگوشت", foods: ["abgoosht", "sangak", "torshi", "onion"] },
+  { id: "baghali-polo-dinner", label: "Baghali polo dinner", labelFa: "شام باقالی پلو", foods: ["baghali-polo", "mast-o-khiar", "doogh"] },
+  { id: "mirza-breakfast", label: "Mirza ghasemi breakfast", labelFa: "صبحانه میرزاقاسمی", foods: ["mirza-ghasemi", "sangak", "doogh"] },
+];
+
+// Guided tour steps: each targets a DOM element by id (set on the relevant
+// container in the render below) so a spotlight + tooltip can point at it.
+const TOUR_STEPS = [
+  {
+    id: "tour-search",
+    title: { en: "Search", fa: "جستجو" },
+    text: {
+      en: "Search any ingredient or dish by name, in English or Farsi, and tap a result to add it.",
+      fa: "هر خوراکی یا غذا را با نام انگلیسی یا فارسی جستجو کنید و برای افزودن روی نتیجه بزنید.",
+    },
+  },
+  {
+    id: "tour-menu",
+    title: { en: "Menu", fa: "منو" },
+    text: {
+      en: "Language, portion mode, sharing, and this guide all live here to keep the main screen uncluttered.",
+      fa: "زبان، حالت مقدار مصرف، اشتراک‌گذاری و همین راهنما همه اینجا هستند تا صفحه اصلی شلوغ نشود.",
+    },
+  },
+  {
+    id: "tour-preset-browse",
+    title: { en: "Presets & ingredients", fa: "پیش‌فرض‌ها و مواد غذایی" },
+    text: {
+      en: "Load a ready-made dish instantly, or browse the full ingredient list grouped by macronutrient.",
+      fa: "یک غذای آماده را فوراً بارگذاری کنید یا فهرست کامل مواد غذایی را بر اساس درشت‌مغذی مرور کنید.",
+    },
+  },
+  {
+    id: "tour-first-card",
+    title: { en: "Food cards", fa: "کارت‌های خوراکی" },
+    text: {
+      en: "Each card shows a nutrient pie you can read at a glance. Edit the gram amount any time, and tap \"Show details\" for GI, amino acids, and micronutrients.",
+      fa: "هر کارت یک نمودار دایره‌ای از مواد مغذی نشان می‌دهد. مقدار گرم را هر زمان می‌توانید تغییر دهید و برای شاخص گلایسمی، اسیدهای آمینه و ریزمغذی‌ها روی «نمایش جزئیات» بزنید.",
+    },
+  },
+  {
+    id: "tour-first-card",
+    title: { en: "Reading the pie colors", fa: "خواندن رنگ‌های نمودار دایره‌ای" },
+    text: {
+      en: "Colors are grouped by macronutrient family: amber shades are carbs (sugar → starch → soluble fiber → insoluble fiber, light to dark), teal is protein, and rose shades are fat (saturated → mono → polyunsaturated).",
+      fa: "رنگ‌ها بر اساس خانواده درشت‌مغذی گروه‌بندی شده‌اند: سایه‌های کهربایی برای کربوهیدرات (قند ← نشاسته ← فیبر محلول ← فیبر نامحلول)، فیروزه‌ای برای پروتئین، و سایه‌های رزی برای چربی (اشباع ← تک‌غیراشباع ← چندغیراشباع).",
+    },
+    colorLegend: true,
+  },
+  {
+    id: "tour-chart",
+    title: { en: "Glucose response chart", fa: "نمودار پاسخ قند خون" },
+    text: {
+      en: "This chart compares how fast and how high blood sugar rises for each selected food over time.",
+      fa: "این نمودار سرعت و میزان افزایش قند خون هر خوراکی انتخاب‌شده را در طول زمان مقایسه می‌کند.",
+    },
+  },
+  {
+    id: "tour-plate",
+    title: { en: "Meal plate", fa: "بشقاب غذا" },
+    text: {
+      en: "Check \"in plate\" on any card to combine foods into one meal and see the blended glucose and nutrition response.",
+      fa: "روی «در بشقاب» در هر کارت تیک بزنید تا خوراکی‌ها را در یک وعده ترکیب کرده و پاسخ ترکیبی قند و تغذیه را ببینید.",
+    },
+  },
+];
+
+function macroGroup(f) {
+  const calCarb = (f.carbs100 + f.soluble100 + f.insoluble100) * 4;
+  const calProtein = f.protein100 * 4;
+  const calFat = f.fat100 * 9;
+  const total = calCarb + calProtein + calFat || 1;
+  const shares = { carb: calCarb / total, protein: calProtein / total, fat: calFat / total };
+  const sorted = Object.entries(shares).sort((a, b) => b[1] - a[1]);
+  if (sorted[0][1] < 0.5 && sorted[0][1] - sorted[1][1] < 0.15) return "mixed";
+  return sorted[0][0];
+}
+
+function portionInfo(food, mode, overrideGrams) {
+  let grams;
+  if (overrideGrams != null && overrideGrams > 0) {
+    grams = overrideGrams;
+  } else if (mode === "100g") {
+    grams = 100;
+  } else if (mode === "50c") {
+    grams = food.carbs100 > 0 ? (50 / food.carbs100) * 100 : 100;
+  } else {
+    grams = food.fdaG;
+  }
+  const carbsAtPortion = (food.carbs100 * grams) / 100;
+  const gl = (food.gi * carbsAtPortion) / 100;
+  return { grams, carbsAtPortion, gl };
+}
+
+function macrosAtPortion(food, grams) {
+  const k = grams / 100;
+  return {
+    sugar: food.sugar100 * k,
+    starch: starch(food) * k,
+    soluble: food.soluble100 * k,
+    insoluble: food.insoluble100 * k,
+    protein: food.protein100 * k,
+    satFat: food.satFat100 * k,
+    mono: food.mono100 * k,
+    poly: food.poly100 * k,
+  };
+}
+
+function microsAtPortion(food, grams) {
+  const k = grams / 100;
+  return {
+    sodium: food.sodium100 * k,
+    potassium: food.potassium100 * k,
+    calcium: food.calcium100 * k,
+    iron: food.iron100 * k,
+    vitC: food.vitC100 * k,
+    magnesium: food.magnesium100 * k,
+    zinc: food.zinc100 * k,
+    vitA: food.vitA100 * k,
+    vitB12: food.vitB12_100 * k,
+    folate: food.folate100 * k,
+  };
+}
+
+function curvePoints(food, gl) {
+  const peak = 1.55 * gl;
+  const sigmaRise = food.ttp / 2.3;
+  const slowFallCats = { fat: 1.5, legume: 1.4, veg: 1.15, grain: 1.15, protein: 1.3 };
+  const sigmaFall = (food.ttp / 1.35) * (slowFallCats[food.cat] || 1.1);
+  const pts = [];
+  for (let t = 0; t <= 200; t += 5) {
+    const sigma = t <= food.ttp ? sigmaRise : sigmaFall;
+    pts.push(Math.max(0, peak * Math.exp(-((t - food.ttp) ** 2) / (2 * sigma * sigma))));
+  }
+  return pts;
+}
+
+function sleepNote(food, gl, lang) {
+  const fast = food.ttp <= 35;
+  const mid = food.ttp > 35 && food.ttp <= 70;
+  const high = gl >= 15;
+  const low = gl < 5;
+  let en, fa;
+  if (gl < 1.5) {
+    en = "Negligible blood sugar effect on its own — unlikely to disturb sleep through glucose alone.";
+    fa = "به‌تنهایی اثر ناچیزی بر قند خون دارد — بعید است به‌خاطر قند خواب را مختل کند.";
+  } else if (fast && high) {
+    en = "Fast, high spike — likely to crash before bed, but the dip can still wake you.";
+    fa = "افزایش سریع و بالا — احتمال افت قبل خواب هست، اما همان افت می‌تواند بیدارتان کند.";
+  } else if (fast && !high) {
+    en = "Fast but modest rise — usually settles before bedtime issues start.";
+    fa = "افزایش سریع ولی محدود — معمولاً قبل از مشکل‌ساز شدن آرام می‌شود.";
+  } else if (mid && high) {
+    en = "Moderate-to-high spike landing mid-sleep window — can fragment early sleep.";
+    fa = "افزایش متوسط تا زیاد درست در بازه‌ی اول خواب — می‌تواند خواب اولیه را مختل کند.";
+  } else if (food.cat === "fat" || (food.ttp > 70 && gl >= 8)) {
+    en = "Delayed, lingering rise — often peaks after you're already asleep.";
+    fa = "افزایش دیرهنگام و طولانی — اغلب وقتی خوابید به اوج می‌رسد.";
+  } else if (low) {
+    en = "Minimal, gentle rise — least likely to disturb sleep.";
+    fa = "افزایش کم و آرام — کمترین احتمال اختلال در خواب.";
+  } else {
+    en = "Slow, steady rise — generally sleep-friendly.";
+    fa = "افزایش آهسته و پایدار — عموماً برای خواب مناسب است.";
+  }
+  return lang === "fa" ? fa : en;
+}
+
+function exerciseNote(food, gl, lang) {
+  const fast = food.ttp <= 35;
+  const fatHeavy = food.cat === "fat" || food.fat100 >= 20;
+  const proteinHeavy = food.cat === "protein";
+  let en, fa;
+  if (gl < 1.5 && (fatHeavy || proteinHeavy)) {
+    en = "Minimal quick fuel — better suited to post-workout recovery (protein/fat) than pre-workout energy.";
+    fa = "سوخت سریع کمی دارد — برای ریکاوری بعد از ورزش (پروتئین/چربی) مناسب‌تر است تا انرژی قبل از تمرین.";
+  } else if (fast && gl >= 12) {
+    en = "Quick-digesting energy — good 30-60 min before a workout, or right after to rapidly refill glycogen.";
+    fa = "انرژی سریع‌الهضم — مناسب ۳۰ تا ۶۰ دقیقه قبل تمرین یا بلافاصله بعد از آن برای پر کردن سریع ذخایر گلیکوژن.";
+  } else if (!fast && gl >= 10) {
+    en = "Slower-release energy — better eaten 2-3 hours before endurance exercise for steady fuel without a crash.";
+    fa = "انرژی با آزادسازی کندتر — بهتر است ۲ تا ۳ ساعت قبل از ورزش استقامتی مصرف شود تا سوخت پایدار بدون افت ناگهانی بدهد.";
+  } else if (fatHeavy) {
+    en = "High-fat and slow to digest — best eaten well before training, not right before, to avoid GI discomfort.";
+    fa = "چرب و کندهضم — بهتر است مدتی قبل از تمرین خورده شود، نه درست قبل از آن، تا ناراحتی گوارشی ایجاد نشود.";
+  } else {
+    en = "Light glucose contribution — fine as a small pre- or post-workout addition, not a primary fuel source.";
+    fa = "سهم کمی در قند خون دارد — به‌عنوان افزودنی کوچک قبل یا بعد تمرین مناسب است، نه منبع اصلی انرژی.";
+  }
+  return lang === "fa" ? fa : en;
+}
+
+function fastingNote(food, gl, lang) {
+  const proteinHeavy = food.protein100 >= 15;
+  const fatHeavy = food.fat100 >= 20 && food.carbs100 < 5;
+  let en, fa;
+  if (gl < 1 && fatHeavy) {
+    en = "Very low glucose/insulin impact — some intermittent-fasting approaches allow small amounts of pure fat like this, though strictly any calories end a true fast.";
+    fa = "اثر بسیار کمی بر قند و انسولین دارد — برخی روش‌های روزه‌داری متناوب مقدار کمی چربی خالص مانند این را مجاز می‌دانند، هرچند از نظر دقیق هر کالری روزه را می‌شکند.";
+  } else if (gl < 1.5 && proteinHeavy) {
+    en = "Low glucose impact, but protein still triggers a real insulin response — not glucose-neutral for strict fasting purposes.";
+    fa = "اثر کمی بر قند دارد، اما پروتئین همچنان پاسخ انسولینی واقعی ایجاد می‌کند — از نظر روزه‌داری دقیق، خنثی از نظر انسولین نیست.";
+  } else if (gl >= 15) {
+    en = "Strong insulin/glucose spike — the most disruptive kind of food to break a fast with if a gentle re-entry is the goal.";
+    fa = "افزایش قوی قند و انسولین — اگر هدف بازگشت آرام باشد، مخرب‌ترین نوع غذا برای شکستن روزه است.";
+  } else if (food.cat === "legume" || food.cat === "veg") {
+    en = "Fiber-rich and gentle — a comparatively steadier way to break a fast than refined carbs.";
+    fa = "سرشار از فیبر و ملایم — نسبت به کربوهیدرات‌های تصفیه‌شده، روش پایدارتری برای شکستن روزه است.";
+  } else {
+    en = "Moderate glucose response — a middle-of-the-road choice for breaking a fast.";
+    fa = "پاسخ متوسط قندی دارد — گزینه‌ای میانه برای شکستن روزه.";
+  }
+  return lang === "fa" ? fa : en;
+}
+
+function round(n, d = 0) {
+  const m = 10 ** d;
+  return Math.round(n * m) / m;
+}
+
+// Colors are shades within 3 hue families so the pie reads at a glance:
+// amber = carbs (4 shades: sugar -> starch -> soluble fiber -> insoluble fiber),
+// teal = protein (1 shade), rose = fat (3 shades: sat -> mono -> poly).
+function findSimilarFoods(food, limit) {
+  const scored = FOODS.filter((f) => f.id !== food.id).map((f) => {
+    let score = f.cat === food.cat ? 0 : 40;
+    score += Math.abs(f.gi - food.gi) * 0.5;
+    score += Math.abs(f.carbs100 - food.carbs100) * 0.3;
+    score += Math.abs(f.protein100 - food.protein100) * 0.5;
+    score += Math.abs(f.fat100 - food.fat100) * 0.3;
+    return { f, score };
+  });
+  scored.sort((a, b) => a.score - b.score);
+  return scored.slice(0, limit).map((s) => s.f);
+}
+
+const MACRO_COLORS = {
+  sugar: "hsl(32, 75%, 40%)",
+  starch: "hsl(32, 72%, 50%)",
+  soluble: "hsl(32, 68%, 62%)",
+  insoluble: "hsl(32, 60%, 74%)",
+  protein: "hsl(158, 55%, 45%)",
+  satFat: "hsl(340, 65%, 38%)",
+  mono: "hsl(340, 62%, 52%)",
+  poly: "hsl(340, 55%, 66%)",
+};
+
+const MACRO_LABELS = {
+  sugar: { en: "Sugar", fa: "قند" },
+  starch: { en: "Starch", fa: "نشاسته" },
+  soluble: { en: "Soluble fiber", fa: "فیبر محلول" },
+  insoluble: { en: "Insoluble fiber", fa: "فیبر نامحلول" },
+  protein: { en: "Protein", fa: "پروتئین" },
+  satFat: { en: "Sat. fat", fa: "چربی اشباع" },
+  mono: { en: "Monounsat. fat", fa: "چربی تک‌غیراشباع" },
+  poly: { en: "Polyunsat. fat", fa: "چربی چندغیراشباع" },
+};
+
+const MACRO_KEYS_ORDERED = ["sugar", "starch", "soluble", "insoluble", "protein", "satFat", "mono", "poly"];
+
+const COLOR_LEGEND_GROUPS = [
+  { title: { en: "Carbs", fa: "کربوهیدرات" }, keys: ["sugar", "starch", "soluble", "insoluble"] },
+  { title: { en: "Protein", fa: "پروتئین" }, keys: ["protein"] },
+  { title: { en: "Fat", fa: "چربی" }, keys: ["satFat", "mono", "poly"] },
+];
+
+const COLOR_LEGEND_SHORT = {
+  sugar: { en: "Sugar", fa: "قند" },
+  starch: { en: "Starch", fa: "نشاسته" },
+  soluble: { en: "Soluble fiber", fa: "فیبر محلول" },
+  insoluble: { en: "Insoluble fiber", fa: "فیبر نامحلول" },
+  protein: { en: "Protein", fa: "پروتئین" },
+  satFat: { en: "Saturated", fa: "اشباع" },
+  mono: { en: "Monounsaturated", fa: "تک‌غیراشباع" },
+  poly: { en: "Polyunsaturated", fa: "چندغیراشباع" },
+};
+
+function ColorLegend({ lang, compact }) {
+  const t = (en, fa) => (lang === "fa" ? fa : en);
+  return (
+    <div style={{ display: "flex", gap: compact ? 14 : 22, flexWrap: "wrap" }}>
+      {COLOR_LEGEND_GROUPS.map((g) => (
+        <div key={g.title.en}>
+          <div style={{ fontSize: 10.5, color: "#8a8f8f", marginBottom: 4, fontWeight: 500 }}>{t(g.title.en, g.title.fa)}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {g.keys.map((k) => (
+              <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: MACRO_COLORS[k], flexShrink: 0 }} />
+                <span style={{ fontSize: 10.5, color: "#c7c5bc", whiteSpace: "nowrap" }}>{t(COLOR_LEGEND_SHORT[k].en, COLOR_LEGEND_SHORT[k].fa)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Amino acid profiles: grams of each essential amino acid per gram of total
+// protein, by protein-source pattern (not per individual food — that level
+// of precision isn't practical here). Patterns reflect well-known real
+// tendencies (grains run low in lysine, legumes run low in methionine,
+// animal/dairy protein is comparatively balanced) but are illustrative
+// approximations, not lab-analyzed values for any specific food.
+// "other" is the remainder of protein grams not itemized as one of the 9
+// essential amino acids (non-essential aminos, not broken out further).
+// ---------------------------------------------------------------------------
+const AMINO_KEYS_ORDERED = ["his", "ile", "leu", "lys", "met", "phe", "thr", "trp", "val", "other"];
+const AMINO_LABELS = {
+  his: { en: "Histidine", fa: "هیستیدین" },
+  ile: { en: "Isoleucine", fa: "ایزولوسین" },
+  leu: { en: "Leucine", fa: "لوسین" },
+  lys: { en: "Lysine", fa: "لیزین" },
+  met: { en: "Methionine", fa: "متیونین" },
+  phe: { en: "Phenylalanine", fa: "فنیل‌آلانین" },
+  thr: { en: "Threonine", fa: "ترئونین" },
+  trp: { en: "Tryptophan", fa: "تریپتوفان" },
+  val: { en: "Valine", fa: "والین" },
+  other: { en: "Other amino acids", fa: "سایر اسیدهای آمینه" },
+};
+// 10 shades of a blue-teal hue family, keeping the amino pie visually part
+// of the "protein" story while each of the 10 slices stays distinguishable.
+const AMINO_COLORS = Object.fromEntries(
+  AMINO_KEYS_ORDERED.map((k, i) => [k, `hsl(${188 - i * 4}, 55%, ${30 + i * 4.5}%)`])
+);
+
+const AMINO_PROFILES = {
+  complete_animal: { his: 0.025, ile: 0.055, leu: 0.087, lys: 0.075, met: 0.025, phe: 0.05, thr: 0.045, trp: 0.014, val: 0.06 },
+  legume: { his: 0.028, ile: 0.045, leu: 0.078, lys: 0.068, met: 0.012, phe: 0.052, thr: 0.038, trp: 0.011, val: 0.048 },
+  grain: { his: 0.022, ile: 0.037, leu: 0.07, lys: 0.028, met: 0.018, phe: 0.05, thr: 0.031, trp: 0.012, val: 0.047 },
+  nut_seed: { his: 0.026, ile: 0.038, leu: 0.065, lys: 0.038, met: 0.02, phe: 0.048, thr: 0.033, trp: 0.014, val: 0.045 },
+};
+
+const NUT_SEED_IDS = ["almonds", "walnuts", "hazelnuts", "pistachios", "sunflower-seeds", "chia-seeds", "flaxseed", "peanut-butter", "cashews", "pecans"];
+const LEGUME_LIKE_PROTEIN_IDS = ["tofu", "tempeh"];
+
+function aminoProfileKey(food) {
+  if (LEGUME_LIKE_PROTEIN_IDS.includes(food.id)) return "legume";
+  if (food.cat === "protein") return "complete_animal";
+  if (food.cat === "legume") return "legume";
+  if (food.cat === "grain") return "grain";
+  if (food.cat === "fat") return NUT_SEED_IDS.includes(food.id) ? "nut_seed" : "complete_animal";
+  return "legume";
+}
+
+function aminoAcidsAtPortion(food, grams) {
+  const proteinG = (food.protein100 * grams) / 100;
+  const profile = AMINO_PROFILES[aminoProfileKey(food)];
+  const result = {};
+  let essentialSum = 0;
+  AMINO_KEYS_ORDERED.forEach((k) => {
+    if (k === "other") return;
+    const v = proteinG * (profile[k] || 0);
+    result[k] = v;
+    essentialSum += v;
+  });
+  result.other = Math.max(0, proteinG - essentialSum);
+  return result;
+}
+
+// Simplified Amino Acid Score: each essential amino acid's fraction (g per g
+// protein) is compared to the FAO/WHO/UNU (2007) suggested adult reference
+// pattern; the lowest ratio across all nine is the "limiting" amino acid and
+// becomes the overall score (capped at 100%) — the same logic PDCAAS uses,
+// minus the digestibility correction. This scores the protein SOURCE TYPE
+// (animal/dairy, legume, grain, or nut/seed), not a lab assay of this food.
+const REFERENCE_AA_PATTERN = { his: 0.015, ile: 0.03, leu: 0.059, lys: 0.045, met: 0.022, phe: 0.038, thr: 0.023, trp: 0.006, val: 0.039 };
+
+function proteinQualityScore(food) {
+  const profile = AMINO_PROFILES[aminoProfileKey(food)];
+  let minRatio = Infinity;
+  let limitingKey = null;
+  Object.keys(REFERENCE_AA_PATTERN).forEach((k) => {
+    const ratio = (profile[k] || 0) / REFERENCE_AA_PATTERN[k];
+    if (ratio < minRatio) {
+      minRatio = ratio;
+      limitingKey = k;
+    }
+  });
+  return { score: Math.min(1, minRatio), limitingKey, rawRatio: minRatio };
+}
+
+function qualityTier(score) {
+  if (score >= 1) return { label: { en: "Complete", fa: "کامل" }, color: "#1d9e75" };
+  if (score >= 0.8) return { label: { en: "Good", fa: "خوب" }, color: "#8bc24a" };
+  if (score >= 0.6) return { label: { en: "Moderate", fa: "متوسط" }, color: "#e0a83c" };
+  return { label: { en: "Limited", fa: "محدود" }, color: "#d4534f" };
+}
+
+const MICRO_LABELS = {
+  sodium: { en: "Sodium", fa: "سدیم", unit: "mg" },
+  potassium: { en: "Potassium", fa: "پتاسیم", unit: "mg" },
+  calcium: { en: "Calcium", fa: "کلسیم", unit: "mg" },
+  iron: { en: "Iron", fa: "آهن", unit: "mg" },
+  vitC: { en: "Vitamin C", fa: "ویتامین C", unit: "mg" },
+  magnesium: { en: "Magnesium", fa: "منیزیم", unit: "mg" },
+  zinc: { en: "Zinc", fa: "روی", unit: "mg" },
+  vitA: { en: "Vitamin A", fa: "ویتامین A", unit: "mcg" },
+  vitB12: { en: "Vitamin B12", fa: "ویتامین B12", unit: "mcg" },
+  folate: { en: "Folate", fa: "فولات", unit: "mcg" },
+};
+const MICRO_KEYS_ORDERED = ["sodium", "potassium", "calcium", "iron", "vitC", "magnesium", "zinc", "vitA", "vitB12", "folate"];
+
+// Adult Daily Values (FDA label reference) used only to express amounts as
+// a rough %DV — not personalized, just a common yardstick.
+const MICRO_DV = {
+  sodium: 2300, potassium: 3400, calcium: 1300, iron: 18, vitC: 90,
+  magnesium: 420, zinc: 11, vitA: 900, vitB12: 2.4, folate: 400,
+};
+
+function microField(food, key) {
+  return key === "vitB12" ? food.vitB12_100 : food[`${key}100`];
+}
+function microAtPortion(food, key, grams) {
+  return (microField(food, key) * grams) / 100;
+}
+function microDvPct(key, value) {
+  return Math.round((value / MICRO_DV[key]) * 100);
+}
+
+// Combine several foods into one "plate": macro grams sum directly (they're
+// additive), but the glucose *curve* is not a simple point-wise average —
+// combining foods raises total glycemic load (more carbs = more total
+// glucose) while fat/fiber typically blunts and delays the peak. This model
+// sums glycemic load, then applies a simple blunting/delay heuristic based
+// on how much fat and fiber ride along with the carbs — a simplification,
+// not a clinical prediction (real mixed-meal responses depend on much more).
+function computePlate(plateFoods, mode, customGrams) {
+  const cg = customGrams || {};
+  const macros = Object.fromEntries(MACRO_KEYS_ORDERED.map((k) => [k, 0]));
+  const micros = Object.fromEntries(MICRO_KEYS_ORDERED.map((k) => [k, 0]));
+  let totalCarb = 0;
+  let totalGL = 0;
+  let ttpWeightedSum = 0;
+  let totalFatG = 0;
+  let totalFiberG = 0;
+
+  plateFoods.forEach((f) => {
+    const { grams, gl, carbsAtPortion } = portionInfo(f, mode, cg[f.id]);
+    const m = macrosAtPortion(f, grams);
+    const mi = microsAtPortion(f, grams);
+    MACRO_KEYS_ORDERED.forEach((k) => (macros[k] += m[k]));
+    MICRO_KEYS_ORDERED.forEach((k) => (micros[k] += mi[k]));
+    totalCarb += carbsAtPortion;
+    totalGL += gl;
+    ttpWeightedSum += f.ttp * Math.max(gl, 0.1);
+    totalFatG += (f.fat100 * grams) / 100;
+    totalFiberG += m.soluble + m.insoluble;
+  });
+
+  const weightGlSum = plateFoods.reduce((s, f) => s + Math.max(portionInfo(f, mode, cg[f.id]).gl, 0.1), 0);
+  const weightedTtp = weightGlSum > 0 ? ttpWeightedSum / weightGlSum : 60;
+  const fatFiberRatio = (totalFatG + totalFiberG) / (totalCarb + 5);
+  const bluntFactor = Math.max(0.55, 1 - 0.18 * fatFiberRatio);
+  const delayBonus = (1 - bluntFactor) * 55;
+  const pseudo = { ttp: weightedTtp + delayBonus, cat: totalFatG > totalCarb * 0.25 ? "fat" : "grain" };
+  const curve = curvePoints(pseudo, totalGL * bluntFactor);
+
+  const totalProteinG = macros.protein;
+  const totalFatGAll = macros.satFat + macros.mono + macros.poly;
+  const totalCarbG = totalCarb + macros.soluble + macros.insoluble;
+  const totalCal = totalCarbG * 4 + totalProteinG * 4 + totalFatGAll * 9;
+
+  const aminos = Object.fromEntries(AMINO_KEYS_ORDERED.map((k) => [k, 0]));
+  plateFoods.forEach((f) => {
+    const { grams } = portionInfo(f, mode, cg[f.id]);
+    const a = aminoAcidsAtPortion(f, grams);
+    AMINO_KEYS_ORDERED.forEach((k) => (aminos[k] += a[k]));
+  });
+
+  return {
+    macros,
+    micros,
+    aminos,
+    totalCarb,
+    totalGL,
+    ttp: Math.round(pseudo.ttp),
+    curve,
+    bluntFactor,
+    totalCarbG,
+    totalProteinG,
+    totalFatG: totalFatGAll,
+    totalCal,
+  };
+}
+
+function buildShareText(selected, plateIds, mode, lang, customGrams) {
+  const cg = customGrams || {};
+  const t = (en, fa) => (lang === "fa" ? fa : en);
+  const modeLabel = t(PORTION_MODES[mode].label, PORTION_MODES[mode].labelFa);
+  const lines = [t("Glycemic comparison", "مقایسه گلایسمی"), `(${modeLabel})`, ""];
+  selected.forEach((f) => {
+    const { gl, carbsAtPortion, grams } = portionInfo(f, mode, cg[f.id]);
+    const customTag = cg[f.id] != null ? ` [${round(grams)}g]` : "";
+    lines.push(
+      `${t(f.name, f.nameFa)}${customTag}: GI ${f.gi}, GL ${round(gl, 1)}, ${t("carbs", "کربوهیدرات")} ${round(carbsAtPortion)}g, ${t("peak", "اوج")} ${f.ttp}min`
+    );
+  });
+  const plateFoods = selected.filter((f) => plateIds.includes(f.id));
+  if (plateFoods.length > 1) {
+    const plate = computePlate(plateFoods, mode, cg);
+    lines.push("", `${t("Plate total", "جمع بشقاب")}: GL ${round(plate.totalGL, 1)}, ${t("carbs", "کربوهیدرات")} ${round(plate.totalCarb)}g, ${t("est. peak", "اوج تخمینی")} ${plate.ttp}min`);
+  }
+  if (typeof window !== "undefined" && /^https?:/.test(window.location.protocol)) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("foods", selected.map((f) => f.id).join(","));
+    url.searchParams.set("plate", plateIds.join(","));
+    url.searchParams.set("mode", mode);
+    url.searchParams.set("lang", lang);
+    lines.push("", url.toString());
+  }
+  return lines.join("\n");
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  }
+  return fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  return new Promise((resolve) => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } catch (e) {
+      // ignore
+    }
+    document.body.removeChild(ta);
+    resolve();
+  });
+}
+
+function readInitialState() {
+  if (typeof window === "undefined") return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const foodsParam = params.get("foods");
+    const modeParam = params.get("mode");
+    const langParam = params.get("lang");
+    const plateParam = params.get("plate");
+    if (!foodsParam) return null;
+    const ids = foodsParam.split(",").filter((id) => FOOD_BY_ID[id]).slice(0, MAX_SELECT);
+    if (ids.length === 0) return null;
+    const plateIds = plateParam ? plateParam.split(",").filter((id) => ids.includes(id)) : ids;
+    return {
+      ids,
+      plateIds,
+      mode: modeParam && PORTION_MODES[modeParam] ? modeParam : "fda",
+      lang: langParam === "fa" ? "fa" : "en",
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// A bigger pie with the gram amount written directly in each slice
+// (no separate legend list beside it).
+function NutrientPie({ values, size, lang, keysOrdered, colors, labels, minSlicePct }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  const [, setTick] = useState(0);
+  const readyRef = useRef(false);
+
+  useEffect(() => {
+    function bothReady() {
+      return window.Chart && window.ChartDataLabels;
+    }
+    if (bothReady()) {
+      readyRef.current = true;
+      setTick((x) => x + 1);
+      return;
+    }
+    const check = setInterval(() => {
+      if (bothReady()) {
+        readyRef.current = true;
+        clearInterval(check);
+        setTick((x) => x + 1);
+      }
+    }, 150);
+    return () => clearInterval(check);
+  }, []);
+
+  useEffect(() => {
+    if (!readyRef.current || !canvasRef.current) return;
+    const t = (en, fa) => (lang === "fa" ? fa : en);
+    const data = keysOrdered.map((k) => round(values[k], 1));
+    const nonZero = data.some((v) => v > 0);
+    const total = data.reduce((a, b) => a + b, 0) || 1;
+    const threshold = minSlicePct != null ? minSlicePct : 0.045;
+
+    if (chartRef.current) chartRef.current.destroy();
+    // NOTE: the datalabels plugin self-registers globally once its script
+    // loads after Chart.js — do NOT also pass a per-chart `plugins: [...]`
+    // array here, or labels get drawn twice (slightly offset), which looks
+    // like grams showing up in the wrong spot on the slice.
+    chartRef.current = new window.Chart(canvasRef.current, {
+      type: "pie",
+      data: {
+        labels: keysOrdered.map((k) => t(labels[k].en, labels[k].fa)),
+        datasets: [
+          {
+            data: nonZero ? data : [1],
+            backgroundColor: nonZero ? keysOrdered.map((k) => colors[k]) : ["#2a2c2d"],
+            borderColor: "#0d0f10",
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: nonZero,
+            titleColor: "#e8e6df",
+            bodyColor: "#e8e6df",
+            backgroundColor: "#16181a",
+            borderColor: "#3a3d3e",
+            borderWidth: 1,
+            callbacks: { label: (ctx) => `${ctx.label}: ${ctx.parsed}g` },
+          },
+          datalabels: {
+            anchor: "center",
+            align: "center",
+            clamp: true,
+            color: "#f5f4f0",
+            backgroundColor: "rgba(13,15,16,0.6)",
+            borderRadius: 4,
+            padding: { top: 2, bottom: 2, left: 4, right: 4 },
+            font: { size: 10, weight: "600" },
+            formatter: (value) => {
+              if (!nonZero || value <= 0) return "";
+              const pct = value / total;
+              if (pct < threshold) return "";
+              return `${round(value, value < 10 ? 1 : 0)}g`;
+            },
+          },
+        },
+      },
+    });
+    return () => chartRef.current && chartRef.current.destroy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values, lang, readyRef.current]);
+
+  return (
+    <div style={{ width: size, height: size, margin: "0 auto" }}>
+      <canvas ref={canvasRef} />
+    </div>
+  );
+}
+
+function MacroPie({ macros, size, lang }) {
+  return (
+    <NutrientPie
+      values={macros}
+      size={size}
+      lang={lang}
+      keysOrdered={MACRO_KEYS_ORDERED}
+      colors={MACRO_COLORS}
+      labels={MACRO_LABELS}
+    />
+  );
+}
+
+function MacroTotals({ macros, lang }) {
+  const t = (en, fa) => (lang === "fa" ? fa : en);
+  const carbsTotal = macros.sugar + macros.starch + macros.soluble + macros.insoluble;
+  const proteinTotal = macros.protein;
+  const fatTotal = macros.satFat + macros.mono + macros.poly;
+  const rows = [
+    { label: t("Carbs", "کربوهیدرات"), value: carbsTotal, color: "hsl(32, 72%, 50%)" },
+    { label: t("Protein", "پروتئین"), value: proteinTotal, color: "hsl(158, 55%, 45%)" },
+    { label: t("Fat", "چربی"), value: fatTotal, color: "hsl(340, 62%, 52%)" },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, justifyContent: "center" }}>
+      {rows.map((r) => (
+        <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: r.color, flexShrink: 0 }} />
+          <span style={{ color: "#8a8f8f" }}>{r.label}</span>
+          <span style={{ fontWeight: 500, marginInlineStart: 2 }}>{round(r.value, r.value < 10 ? 1 : 0)}g</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AminoPie({ aminos, size, lang }) {
+  return (
+    <NutrientPie
+      values={aminos}
+      size={size}
+      lang={lang}
+      keysOrdered={AMINO_KEYS_ORDERED}
+      colors={AMINO_COLORS}
+      labels={AMINO_LABELS}
+      minSlicePct={0.035}
+    />
+  );
+}
+
+function ProteinQualityBadge({ food, lang }) {
+  const t = (en, fa) => (lang === "fa" ? fa : en);
+  const { score, limitingKey } = proteinQualityScore(food);
+  const tier = qualityTier(score);
+  const pct = Math.round(score * 100);
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "0.5px solid #2a2c2d" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+        <span style={{ fontSize: 11.5, color: "#8a8f8f" }}>{t("Protein quality", "کیفیت پروتئین")}</span>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: tier.color }}>
+          {pct}% · {t(tier.label.en, tier.label.fa)}
+        </span>
+      </div>
+      <div style={{ height: 7, borderRadius: 999, background: "#2a2c2d", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: tier.color, borderRadius: 999 }} />
+      </div>
+      {score < 1 && (
+        <div style={{ fontSize: 11, color: "#797d7d", marginTop: 6, lineHeight: 1.5 }}>
+          {t(
+            `Limiting amino acid: ${AMINO_LABELS[limitingKey].en} — the amount your body can actually use for building protein is capped by whichever essential amino acid is scarcest.`,
+            `اسید آمینه محدودکننده: ${AMINO_LABELS[limitingKey].fa} — مقداری که بدن واقعاً می‌تواند برای ساخت پروتئین استفاده کند، توسط کمیاب‌ترین اسید آمینه ضروری محدود می‌شود.`
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AminoAcidSection({ food, grams, lang, t }) {
+  const [open, setOpen] = useState(false);
+  const proteinG = (food.protein100 * grams) / 100;
+  if (proteinG < 0.5) return null;
+  const aminos = aminoAcidsAtPortion(food, grams);
+  return (
+    <Collapsible
+      open={open}
+      onToggle={() => setOpen((o) => !o)}
+      showLabel={t("Amino acid profile", "نمایه اسیدهای آمینه")}
+      hideLabel={t("Hide amino acids", "پنهان کردن اسیدهای آمینه")}
+    >
+      <div style={{ fontSize: 11, color: "#797d7d", marginBottom: 6, lineHeight: 1.5 }}>
+        {t(
+          "Estimated from typical patterns for this protein source, not lab-measured for this specific food.",
+          "بر اساس الگوی معمول این نوع منبع پروتئین تخمین زده شده، نه اندازه‌گیری آزمایشگاهی برای این خوراکی خاص."
+        )}
+      </div>
+      <AminoPie aminos={aminos} size={120} lang={lang} />
+      <ProteinQualityBadge food={food} lang={lang} />
+    </Collapsible>
+  );
+}
+
+function Collapsible({ open, onToggle, showLabel, hideLabel, children }) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          background: open ? "#1c2b25" : "#1a1c1d",
+          border: `0.5px solid ${open ? "#1d9e75" : "#3a3d3e"}`,
+          color: open ? "#8fd9bb" : "#c7c5bc",
+          fontSize: 13.5,
+          fontWeight: 500,
+          cursor: "pointer",
+          padding: "9px 14px",
+          borderRadius: 999,
+          minHeight: 40,
+        }}
+      >
+        {open ? hideLabel : showLabel}
+        <span
+          style={{
+            display: "inline-block",
+            fontSize: 10,
+            transition: "transform 0.15s ease",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          }}
+        >
+          ▾
+        </span>
+      </button>
+      {open && <div style={{ marginTop: 8 }}>{children}</div>}
+    </div>
+  );
+}
+
+function FoodCard({ food: f, mode, customGrams, plateIds, openDetails, lang, setGramsFor, resetGramsFor, togglePlateMembership, toggleDetails, pieSize, swapOpenId, setSwapOpenId, swapQuery, setSwapQuery, onSwapFood }) {
+  const t = (en, fa) => (lang === "fa" ? fa : en);
+  const { grams, carbsAtPortion, gl } = portionInfo(f, mode, customGrams[f.id]);
+  const unit = LIQUID_IDS.includes(f.id) ? "ml" : "g";
+  const macros = macrosAtPortion(f, grams);
+  const micros = microsAtPortion(f, grams);
+  const isOpen = !!openDetails[f.id];
+  const inPlate = plateIds.includes(f.id);
+  const isCustom = customGrams[f.id] != null;
+  const swapPanelOpen = swapOpenId === f.id;
+  const swapRef = useRef(null);
+
+  const q = swapQuery.trim().toLowerCase();
+  const swapResults = q
+    ? FOODS.filter((sf) => sf.id !== f.id && (sf.name.toLowerCase().includes(q) || sf.nameFa.includes(swapQuery.trim()))).slice(0, 8)
+    : findSimilarFoods(f, 6);
+
+  function toggleSwap() {
+    setSwapOpenId(swapPanelOpen ? null : f.id);
+    setSwapQuery("");
+  }
+
+  useEffect(() => {
+    if (!swapPanelOpen) return;
+    function handleClickOutside(e) {
+      if (swapRef.current && !swapRef.current.contains(e.target)) {
+        setSwapOpenId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [swapPanelOpen]);
+
+  return (
+    <div style={{ background: "#16181a", border: `0.5px solid ${f.color}`, borderRadius: 12, padding: 14 }}>
+      <div ref={swapRef}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6, marginBottom: 2 }}>
+          <button
+            onClick={toggleSwap}
+            title={t("Swap for a similar food", "جایگزینی با خوراکی مشابه")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: swapPanelOpen ? "#1c2b25" : "transparent",
+              border: `0.5px solid ${swapPanelOpen ? "#1d9e75" : "transparent"}`,
+              borderRadius: 10,
+              padding: "6px 8px 6px 6px",
+              margin: "-6px -8px 0 -6px",
+              cursor: "pointer",
+              color: "#e8e6df",
+              minHeight: 40,
+            }}
+          >
+            <span style={{ fontSize: 14, fontWeight: 500 }}>{t(f.name, f.nameFa)}</span>
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                background: swapPanelOpen ? "#1d9e75" : "#2a2c2d",
+                color: swapPanelOpen ? "#0d0f10" : "#c7c5bc",
+                fontSize: 12,
+                flexShrink: 0,
+                transition: "transform 0.15s ease, background 0.15s ease",
+                transform: swapPanelOpen ? "rotate(180deg)" : "rotate(0deg)",
+              }}
+            >
+              ▾
+            </span>
+          </button>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8a8f8f", cursor: "pointer", whiteSpace: "nowrap", minHeight: 40, padding: "4px 2px" }}>
+            <input type="checkbox" checked={inPlate} onChange={() => togglePlateMembership(f.id)} style={{ accentColor: "#1d9e75", width: 18, height: 18 }} />
+            {t("in plate", "در بشقاب")}
+          </label>
+        </div>
+
+        {swapPanelOpen && (
+          <div style={{ background: "#0d0f10", border: "0.5px solid #3a3d3e", borderRadius: 10, padding: 10, marginBottom: 10 }}>
+            <input
+              autoFocus
+              value={swapQuery}
+              onChange={(e) => setSwapQuery(e.target.value)}
+              placeholder={t("Search a replacement...", "جست‌وجوی جایگزین...")}
+              style={{ width: "100%", background: "#16181a", border: "0.5px solid #3a3d3e", color: "#e8e6df", borderRadius: 8, padding: "10px 10px", fontSize: 14, minHeight: 42 }}
+            />
+            <div style={{ fontSize: 10.5, color: "#6f7373", margin: "8px 0 4px" }}>
+              {q ? t("Search results", "نتایج جستجو") : t("Similar foods", "خوراکی‌های مشابه")}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 220, overflowY: "auto" }}>
+              {swapResults.length === 0 && <div style={{ fontSize: 12, color: "#6f7373", padding: "8px 2px" }}>{t("No matches", "موردی یافت نشد")}</div>}
+              {swapResults.map((sf) => (
+                <button
+                  key={sf.id}
+                  onClick={() => onSwapFood(f.id, sf.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    textAlign: lang === "fa" ? "right" : "left",
+                    background: "transparent",
+                    border: "0.5px solid transparent",
+                    borderRadius: 8,
+                    padding: "9px 8px",
+                    cursor: "pointer",
+                    color: "#e8e6df",
+                    fontSize: 13,
+                    minHeight: 40,
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: sf.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>{t(sf.name, sf.nameFa)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 11.5, color: "#8a8f8f", marginBottom: 4 }}>{t(f.nameFa, f.name)}</div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        <input
+          type="number"
+          min="1"
+          value={round(grams, 1)}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (!isNaN(v) && v > 0) setGramsFor(f.id, v);
+          }}
+          style={{
+            width: 72,
+            background: "#0d0f10",
+            border: `0.5px solid ${isCustom ? "#1d9e75" : "#3a3d3e"}`,
+            color: "#e8e6df",
+            borderRadius: 8,
+            padding: "8px 8px",
+            fontSize: 14,
+            minHeight: 38,
+          }}
+        />
+        <span style={{ fontSize: 12, color: "#8a8f8f" }}>{unit}</span>
+        {isCustom ? (
+          <button
+            onClick={() => resetGramsFor(f.id)}
+            style={{ background: "transparent", border: "none", color: "#7fa3d1", fontSize: 12.5, cursor: "pointer", padding: "8px 0", textDecoration: "underline" }}
+          >
+            {t("reset", "بازنشانی")}
+          </button>
+        ) : (
+          mode === "fda" && <span style={{ fontSize: 11, color: "#6f7373" }}>({t(f.fdaLabel, f.fdaLabelFa)})</span>
+        )}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+        <MacroPie macros={macros} size={pieSize} lang={lang} />
+        <MacroTotals macros={macros} lang={lang} />
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <Row label={t("Glycemic load", "بار گلایسمی")} value={round(gl, 1)} />
+        <Row label={t("Time to peak", "زمان اوج")} value={`${f.ttp} min`} />
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <Collapsible
+          open={isOpen}
+          onToggle={() => toggleDetails(f.id)}
+          showLabel={t("Show details", "نمایش جزئیات")}
+          hideLabel={t("Hide details", "پنهان کردن جزئیات")}
+        >
+          <Row label={t("Glycemic index", "شاخص گلایسمی")} value={f.gi} />
+          <Row label={t("Available carbs (for GI/GL)", "کربوهیدرات قابل‌جذب (برای GI/GL)")} value={`${round(carbsAtPortion)}g`} />
+          <Row label={t("Total carbohydrate", "کل کربوهیدرات")} value={`${round(carbsAtPortion + macros.soluble + macros.insoluble)}g`} />
+          <Advice label={t("Sleep", "خواب")} text={sleepNote(f, gl, lang)} />
+          <Advice label={t("Exercise", "ورزش")} text={exerciseNote(f, gl, lang)} />
+          <Advice label={t("Fasting", "روزه‌داری")} text={fastingNote(f, gl, lang)} />
+          <div style={{ marginTop: 8, borderTop: "0.5px solid #2a2c2d", paddingTop: 8 }}>
+            <div style={{ fontSize: 10.5, letterSpacing: "0.04em", color: "#6f7373", textTransform: "uppercase", marginBottom: 4 }}>
+              {t("Micronutrients (approx.)", "ریزمغذی‌ها (تقریبی)")}
+            </div>
+            {MICRO_KEYS_ORDERED.map((k) => (
+              <MicroRow key={k} label={t(MICRO_LABELS[k].en, MICRO_LABELS[k].fa)} value={micros[k]} unit={MICRO_LABELS[k].unit} dvPct={microDvPct(k, micros[k])} />
+            ))}
+          </div>
+        </Collapsible>
+
+        <AminoAcidSection food={f} grams={grams} lang={lang} t={t} />
+      </div>
+    </div>
+  );
+}
+
+function Compare() {
+  const initial = useMemo(() => readInitialState(), []);
+  const [lang, setLang] = useState(initial ? initial.lang : "en");
+  const [mode, setMode] = useState(initial ? initial.mode : "fda");
+  const [query, setQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(-1);
+  const [tourRect, setTourRect] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(initial ? initial.ids : DEFAULT_IDS);
+  const [plateIds, setPlateIds] = useState(initial ? initial.plateIds : DEFAULT_IDS);
+  const [customGrams, setCustomGrams] = useState({});
+  const [openDetails, setOpenDetails] = useState({});
+  const [swapOpenId, setSwapOpenId] = useState(null);
+  const [swapQuery, setSwapQuery] = useState("");
+  const [plateInfoOpen, setPlateInfoOpen] = useState(false);
+  const [plateAminoOpen, setPlateAminoOpen] = useState(false);
+  const [shareStatus, setShareStatus] = useState("idle");
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  const plateCanvasRef = useRef(null);
+  const plateChartRef = useRef(null);
+  const chartJsLoaded = useRef(false);
+  const [, setTick] = useState(0);
+
+  const t = (en, fa) => (lang === "fa" ? fa : en);
+
+  // newest-selected food first
+  const selected = useMemo(
+    () => selectedIds.map((id) => FOOD_BY_ID[id]).filter(Boolean),
+    [selectedIds]
+  );
+
+  const plateFoods = useMemo(() => selected.filter((f) => plateIds.includes(f.id)), [selected, plateIds]);
+
+  // Browse-all list is grouped by macro dominance and independent of the
+  // search box — it's a separate way to explore, not a filtered view.
+  const browseGroups = useMemo(() => {
+    const groups = { carb: [], protein: [], fat: [], mixed: [] };
+    FOODS.forEach((f) => groups[macroGroup(f)].push(f));
+    return groups;
+  }, []);
+
+  // Autocomplete suggestions for the search box (top N matches)
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return FOODS.filter((f) => f.name.toLowerCase().includes(q) || f.nameFa.includes(query.trim())).slice(0, 8);
+  }, [query]);
+
+  function toggle(id) {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) {
+        setPlateIds((p) => p.filter((x) => x !== id));
+        return prev.filter((x) => x !== id);
+      }
+      const next = [id, ...prev];
+      if (next.length > MAX_SELECT) {
+        const dropped = next.pop();
+        setPlateIds((p) => p.filter((x) => x !== dropped).concat(id));
+      } else {
+        setPlateIds((p) => [...p, id]);
+      }
+      return next;
+    });
+  }
+
+  function togglePlateMembership(id) {
+    setPlateIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  }
+
+  function selectSuggestion(f) {
+    toggle(f.id);
+    setQuery("");
+    setShowSuggestions(false);
+    setActiveIndex(-1);
+  }
+
+  function handleSearchKeyDown(e) {
+    if (!showSuggestions || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = suggestions[activeIndex] || suggestions[0];
+      if (pick) selectSuggestion(pick);
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
+  }
+
+  function toggleDetails(id) {
+    setOpenDetails((o) => ({ ...o, [id]: !o[id] }));
+  }
+
+  function swapFood(oldId, newId) {
+    if (oldId === newId || !FOOD_BY_ID[newId]) {
+      setSwapOpenId(null);
+      return;
+    }
+    setSelectedIds((prev) => prev.map((id) => (id === oldId ? newId : id)));
+    setPlateIds((prev) => prev.map((id) => (id === oldId ? newId : id)));
+    setCustomGrams((prev) => {
+      if (!(oldId in prev)) return prev;
+      const next = { ...prev };
+      next[newId] = next[oldId];
+      delete next[oldId];
+      return next;
+    });
+    setOpenDetails((prev) => {
+      if (!(oldId in prev)) return prev;
+      const next = { ...prev };
+      next[newId] = next[oldId];
+      delete next[oldId];
+      return next;
+    });
+    setSwapOpenId(null);
+    setSwapQuery("");
+  }
+
+  function applyPreset(preset) {
+    // presets are allowed to exceed MAX_SELECT — a dish's real ingredient
+    // list shouldn't be truncated just to fit the manual-pick cap
+    setSelectedIds(preset.foods);
+    setPlateIds(preset.foods);
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !/^https?:/.test(window.location.protocol)) return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("foods", selectedIds.join(","));
+      url.searchParams.set("plate", plateIds.join(","));
+      url.searchParams.set("mode", mode);
+      url.searchParams.set("lang", lang);
+      window.history.replaceState({}, "", url.toString());
+    } catch (e) {
+      // ignore
+    }
+  }, [selectedIds, plateIds, mode, lang]);
+
+  async function handleShare() {
+    const text = buildShareText(selected, plateIds, mode, lang, customGrams);
+    await copyText(text);
+    setShareStatus("copied");
+    setTimeout(() => setShareStatus("idle"), 2000);
+  }
+
+  function startTour() {
+    setPresetsOpen(false);
+    setBrowseOpen(false);
+    setTourStep(0);
+  }
+
+  useEffect(() => {
+    if (tourStep < 0) return;
+    const step = TOUR_STEPS[tourStep];
+    if (!step) return;
+    const el = document.getElementById(step.id);
+    if (!el) {
+      setTourRect(null);
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setTourRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    const timer = setTimeout(measure, 320);
+    window.addEventListener("resize", measure);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", measure);
+    };
+  }, [tourStep]);
+
+  function setGramsFor(id, grams) {
+    setCustomGrams((prev) => ({ ...prev, [id]: grams }));
+  }
+  function resetGramsFor(id) {
+    setCustomGrams((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  // Load Chart.js + the datalabels plugin (for in-slice gram labels)
+  useEffect(() => {
+    function ready() {
+      chartJsLoaded.current = true;
+      setTick((x) => x + 1);
+    }
+    if (window.Chart && window.ChartDataLabels) {
+      ready();
+      return;
+    }
+    const s1 = document.createElement("script");
+    s1.src = "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js";
+    s1.onload = () => {
+      const s2 = document.createElement("script");
+      s2.src = "https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js";
+      s2.onload = ready;
+      document.body.appendChild(s2);
+    };
+    document.body.appendChild(s1);
+  }, []);
+
+  // Response curve chart
+  useEffect(() => {
+    if (!chartJsLoaded.current || !window.Chart || !canvasRef.current) return;
+    const labels = [];
+    for (let tt = 0; tt <= 200; tt += 5) labels.push(tt);
+
+    const datasets = selected.map((f) => {
+      const { gl } = portionInfo(f, mode, customGrams[f.id]);
+      return {
+        label: lang === "fa" ? f.nameFa : f.name,
+        data: curvePoints(f, gl),
+        borderColor: f.color,
+        backgroundColor: "transparent",
+        borderWidth: 2.5,
+        pointRadius: 0,
+        tension: 0.3,
+      };
+    });
+
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new window.Chart(canvasRef.current, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: true, labels: { color: "#c7c5bc", font: { size: 12 }, usePointStyle: true, boxWidth: 8 } },
+          tooltip: { titleColor: "#e8e6df", bodyColor: "#e8e6df", backgroundColor: "#16181a", borderColor: "#3a3d3e", borderWidth: 1 },
+          datalabels: { display: false },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: t("minutes after eating", "دقیقه پس از خوردن"), color: "#8a8f8f" },
+            ticks: { color: "#797d7d", maxTicksLimit: 9 },
+            grid: { color: "#222425" },
+          },
+          y: {
+            title: { display: true, text: t("blood glucose rise", "افزایش قند خون"), color: "#8a8f8f" },
+            ticks: { color: "#797d7d" },
+            grid: { color: "#222425" },
+            beginAtZero: true,
+          },
+        },
+      },
+    });
+    return () => chartRef.current && chartRef.current.destroy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, lang, mode, customGrams, chartJsLoaded.current]);
+
+  const plate = useMemo(() => (plateFoods.length > 0 ? computePlate(plateFoods, mode, customGrams) : null), [plateFoods, mode, customGrams]);
+
+  // Plate response curve
+  useEffect(() => {
+    if (!chartJsLoaded.current || !window.Chart || !plateCanvasRef.current || !plate) return;
+    const labels = [];
+    for (let tt = 0; tt <= 200; tt += 5) labels.push(tt);
+
+    if (plateChartRef.current) plateChartRef.current.destroy();
+    plateChartRef.current = new window.Chart(plateCanvasRef.current, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: t("Whole plate", "کل بشقاب"),
+            data: plate.curve,
+            borderColor: "#e8e6df",
+            backgroundColor: "rgba(232,230,223,0.08)",
+            fill: true,
+            borderWidth: 2.5,
+            pointRadius: 0,
+            tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { titleColor: "#e8e6df", bodyColor: "#e8e6df", backgroundColor: "#16181a", borderColor: "#3a3d3e", borderWidth: 1 },
+          datalabels: { display: false },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: t("minutes after eating", "دقیقه پس از خوردن"), color: "#8a8f8f" },
+            ticks: { color: "#797d7d", maxTicksLimit: 9 },
+            grid: { color: "#222425" },
+          },
+          y: {
+            title: { display: true, text: t("blood glucose rise", "افزایش قند خون"), color: "#8a8f8f" },
+            ticks: { color: "#797d7d" },
+            grid: { color: "#222425" },
+            beginAtZero: true,
+          },
+        },
+      },
+    });
+    return () => plateChartRef.current && plateChartRef.current.destroy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plate, lang, chartJsLoaded.current]);
+
+  return (
+    <div
+      dir={lang === "fa" ? "rtl" : "ltr"}
+      style={{
+        fontFamily: "var(--font-sans)",
+        background: "#0d0f10",
+        color: "#e8e6df",
+        borderRadius: 14,
+        overflow: "hidden",
+        border: "0.5px solid #2a2c2d",
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+      }}
+    >
+      {/* Search + menu */}
+      <div style={{ borderBottom: "0.5px solid #2a2c2d", padding: "16px 14px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <div id="tour-search" style={{ position: "relative", flex: 1 }}>
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setShowSuggestions(true);
+                setActiveIndex(0);
+              }}
+              onFocus={() => query && setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 120)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder={t("Search foods (e.g. \"onion\")...", "جست‌وجوی خوراکی (مثلا «پیاز»)...")}
+              style={{ width: "100%", background: "#16181a", border: "0.5px solid #3a3d3e", color: "#e8e6df", borderRadius: 10, padding: "12px 12px", fontSize: 15, minHeight: 44 }}
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  right: 0,
+                  background: "#16181a",
+                  border: "0.5px solid #3a3d3e",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  zIndex: 20,
+                  boxShadow: "0 6px 16px rgba(0,0,0,0.4)",
+                }}
+              >
+                {suggestions.map((f, i) => (
+                  <div
+                    key={f.id}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectSuggestion(f);
+                    }}
+                    onMouseEnter={() => setActiveIndex(i)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "12px 12px",
+                      cursor: "pointer",
+                      background: i === activeIndex ? "#1c2b25" : "transparent",
+                      fontSize: 14,
+                      minHeight: 44,
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: f.color, flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{t(f.name, f.nameFa)}</span>
+                    {selectedIds.includes(f.id) && <span style={{ fontSize: 11, color: "#8a8f8f" }}>✓</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ position: "relative" }}>
+            <button
+              id="tour-menu"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-label={t("Settings", "تنظیمات")}
+              style={{
+                background: menuOpen ? "#1c2b25" : "#16181a",
+                border: `0.5px solid ${menuOpen ? "#1d9e75" : "#3a3d3e"}`,
+                color: "#e8e6df",
+                borderRadius: 8,
+                width: 44,
+                height: 44,
+                fontSize: 18,
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              ☰
+            </button>
+          </div>
+        </div>
+
+        <div id="tour-preset-browse" style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => {
+              setPresetsOpen((o) => !o);
+              setBrowseOpen(false);
+            }}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              background: presetsOpen ? "#1c2b25" : "#1a1c1d",
+              border: `0.5px solid ${presetsOpen ? "#1d9e75" : "#3a3d3e"}`,
+              color: presetsOpen ? "#8fd9bb" : "#c7c5bc",
+              borderRadius: 8,
+              padding: "11px 10px",
+              fontSize: 12.5,
+              fontWeight: 500,
+              cursor: "pointer",
+              minHeight: 40,
+            }}
+          >
+            🍽️ {t("Preset plates", "بشقاب‌های آماده")}
+          </button>
+          <button
+            onClick={() => {
+              setBrowseOpen((o) => !o);
+              setPresetsOpen(false);
+            }}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              background: browseOpen ? "#1c2b25" : "#1a1c1d",
+              border: `0.5px solid ${browseOpen ? "#1d9e75" : "#3a3d3e"}`,
+              color: browseOpen ? "#8fd9bb" : "#c7c5bc",
+              borderRadius: 8,
+              padding: "11px 10px",
+              fontSize: 12.5,
+              fontWeight: 500,
+              cursor: "pointer",
+              minHeight: 40,
+            }}
+          >
+            📋 {t("Ingredients list", "فهرست مواد غذایی")}
+          </button>
+        </div>
+
+        {presetsOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {PLATE_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => applyPreset(p)}
+                style={{
+                  textAlign: lang === "fa" ? "right" : "left",
+                  background: "transparent",
+                  border: "0.5px solid #2a2c2d",
+                  color: "#c7c5bc",
+                  borderRadius: 8,
+                  padding: "10px 10px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  minHeight: 40,
+                }}
+              >
+                {t(p.label, p.labelFa)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {browseOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 380, overflowY: "auto" }}>
+            {Object.entries(MACRO_GROUPS).map(([gk, gm]) => {
+              const items = browseGroups[gk] || [];
+              if (items.length === 0) return null;
+              return (
+                <div key={gk}>
+                  <div style={{ fontSize: 10.5, letterSpacing: "0.06em", color: "#6f7373", textTransform: "uppercase", margin: "4px 2px" }}>
+                    {t(gm.label, gm.labelFa)}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {items.map((f) => {
+                      const isSel = selectedIds.includes(f.id);
+                      return (
+                        <button
+                          key={f.id}
+                          onClick={() => toggle(f.id)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            textAlign: lang === "fa" ? "right" : "left",
+                            background: isSel ? "#1c1f21" : "transparent",
+                            border: isSel ? `0.5px solid ${f.color}` : "0.5px solid transparent",
+                            borderRadius: 8,
+                            padding: "10px 10px",
+                            cursor: "pointer",
+                            color: "#e8e6df",
+                            fontSize: 13.5,
+                            minHeight: 40,
+                          }}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: f.color, flexShrink: 0 }} />
+                          <span style={{ flex: 1 }}>{t(f.name, f.nameFa)}</span>
+                          {isSel && <span style={{ fontSize: 11, color: "#8a8f8f" }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Main */}
+      <div style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+        {selected.length === 0 ? (
+          <div style={{ color: "#8a8f8f", fontSize: 13, padding: "40px 0", textAlign: "center" }}>
+            {t(`Select up to ${MAX_SELECT} foods to compare their glucose response.`, `برای مقایسه، حداکثر ${MAX_SELECT} خوراکی انتخاب کنید.`)}
+          </div>
+        ) : (
+          <>
+            <div id="tour-first-card">
+              <FoodCard
+                food={selected[0]}
+                mode={mode}
+                customGrams={customGrams}
+                plateIds={plateIds}
+                openDetails={openDetails}
+                lang={lang}
+                setGramsFor={setGramsFor}
+                resetGramsFor={resetGramsFor}
+                togglePlateMembership={togglePlateMembership}
+                toggleDetails={toggleDetails}
+                pieSize={140}
+                swapOpenId={swapOpenId}
+                setSwapOpenId={setSwapOpenId}
+                swapQuery={swapQuery}
+                setSwapQuery={setSwapQuery}
+                onSwapFood={swapFood}
+              />
+            </div>
+
+            <div id="tour-chart">
+              <div style={{ fontSize: 11, letterSpacing: "0.06em", color: "#6f7373", textTransform: "uppercase", marginBottom: 6 }}>
+                {t("Individual glucose response", "پاسخ قندی هر خوراکی")}
+              </div>
+              <div style={{ position: "relative", height: 260 }}>
+                <canvas ref={canvasRef} />
+              </div>
+            </div>
+
+            {selected.length > 1 && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+                {selected.slice(1).map((f) => (
+                  <FoodCard
+                    key={f.id}
+                    food={f}
+                    mode={mode}
+                    customGrams={customGrams}
+                    plateIds={plateIds}
+                    openDetails={openDetails}
+                    lang={lang}
+                    setGramsFor={setGramsFor}
+                    resetGramsFor={resetGramsFor}
+                    togglePlateMembership={togglePlateMembership}
+                    toggleDetails={toggleDetails}
+                    pieSize={140}
+                    swapOpenId={swapOpenId}
+                    setSwapOpenId={setSwapOpenId}
+                    swapQuery={swapQuery}
+                    setSwapQuery={setSwapQuery}
+                    onSwapFood={swapFood}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div id="tour-plate" style={{ borderTop: "0.5px solid #2a2c2d", paddingTop: 16, marginTop: 4 }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.06em", color: "#6f7373", textTransform: "uppercase", marginBottom: 2 }}>
+                {t("Meal plate", "بشقاب غذا")}
+              </div>
+              {plateFoods.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: "#8a8f8f" }}>
+                  {t('No foods checked "in plate" — tick at least one food above to build a plate.', 'هیچ خوراکی‌ای در «در بشقاب» تیک نخورده — حداقل یکی را از بالا انتخاب کنید.')}
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+                    {t("Combined response of your checked foods eaten together", "پاسخ ترکیبی خوراکی‌های تیک‌خورده در صورت خوردن با هم")}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#8a8f8f", marginBottom: 12, lineHeight: 1.6 }}>
+                    {plateFoods.map((f) => t(f.name, f.nameFa)).join(" + ")}
+                    {" — "}
+                    {t(
+                      "combined, not averaged: total glycemic load adds up, while fat and fiber blunt and delay the peak.",
+                      "ترکیبی، نه میانگین: بار گلایسمی کل جمع می‌شود، در حالی که چربی و فیبر اوج را کند و به‌تأخیر می‌اندازند."
+                    )}
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, alignItems: "start" }}>
+                    <div>
+                      <div style={{ position: "relative", height: 240 }}>
+                        <canvas ref={plateCanvasRef} />
+                      </div>
+                      <div style={{ display: "flex", gap: 16, marginTop: 10, flexWrap: "wrap" }}>
+                        <Row label={t("Plate glycemic load", "بار گلایسمی بشقاب")} value={round(plate.totalGL, 1)} />
+                        <Row label={t("Available carbs (for GI/GL)", "کربوهیدرات قابل‌جذب (برای GI/GL)")} value={`${round(plate.totalCarb)}g`} />
+                        <Row label={t("Estimated peak", "اوج تخمینی")} value={`${plate.ttp} min`} />
+                      </div>
+                    </div>
+                    <div style={{ background: "#16181a", border: "0.5px solid #2a2c2d", borderRadius: 12, padding: 14 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 500, marginBottom: 8, textAlign: "center" }}>
+                        {t("Plate macronutrients", "درشت‌مغذی‌های بشقاب")}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                        <MacroPie macros={plate.macros} size={170} lang={lang} />
+                        <MacroTotals macros={plate.macros} lang={lang} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <Collapsible
+                    open={plateInfoOpen}
+                    onToggle={() => setPlateInfoOpen((o) => !o)}
+                    showLabel={t("Show more nutrition info", "نمایش اطلاعات تغذیه‌ای بیشتر")}
+                    hideLabel={t("Hide extra nutrition info", "پنهان کردن اطلاعات اضافی")}
+                  >
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 8 }}>
+                      <div style={{ background: "#16181a", border: "0.5px solid #2a2c2d", borderRadius: 12, padding: 14 }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>{t("Macronutrients", "درشت‌مغذی‌ها")}</div>
+                        <Row label={t("Total carbohydrate", "کل کربوهیدرات")} value={`${round(plate.totalCarbG)}g`} />
+                        <div style={{ paddingInlineStart: 12 }}>
+                          <Row label={t("– sugars", "– قندها")} value={`${round(plate.macros.sugar)}g`} />
+                          <Row label={t("– starch", "– نشاسته")} value={`${round(plate.macros.starch)}g`} />
+                          <Row label={t("– fiber", "– فیبر")} value={`${round(plate.macros.soluble + plate.macros.insoluble)}g`} />
+                        </div>
+                        <Row label={t("Protein", "پروتئین")} value={`${round(plate.totalProteinG)}g`} />
+                        <Row label={t("Fat", "چربی")} value={`${round(plate.totalFatG)}g`} />
+                        <Row label={t("Estimated calories", "کالری تخمینی")} value={`${round(plate.totalCal)} kcal`} />
+                      </div>
+                      <div style={{ background: "#16181a", border: "0.5px solid #2a2c2d", borderRadius: 12, padding: 14 }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>{t("Micronutrients (approx.)", "ریزمغذی‌ها (تقریبی)")}</div>
+                        {MICRO_KEYS_ORDERED.map((k) => (
+                          <MicroRow key={k} label={t(MICRO_LABELS[k].en, MICRO_LABELS[k].fa)} value={plate.micros[k]} unit={MICRO_LABELS[k].unit} dvPct={microDvPct(k, plate.micros[k])} />
+                        ))}
+                      </div>
+                    </div>
+                    {plate.totalProteinG >= 0.5 && (
+                      <div style={{ marginTop: 12 }}>
+                        <Collapsible
+                          open={plateAminoOpen}
+                          onToggle={() => setPlateAminoOpen((o) => !o)}
+                          showLabel={t("Show plate amino acid profile", "نمایش نمایه اسیدهای آمینه بشقاب")}
+                          hideLabel={t("Hide amino acid profile", "پنهان کردن نمایه اسیدهای آمینه")}
+                        >
+                          <div style={{ background: "#16181a", border: "0.5px solid #2a2c2d", borderRadius: 12, padding: 14 }}>
+                            <div style={{ fontSize: 11, color: "#797d7d", marginBottom: 8, lineHeight: 1.5 }}>
+                              {t(
+                                "Combined estimate from each food's typical protein-source pattern, not lab-measured.",
+                                "برآورد ترکیبی بر اساس الگوی معمول منبع پروتئین هر خوراکی، نه اندازه‌گیری آزمایشگاهی."
+                              )}
+                            </div>
+                            <AminoPie aminos={plate.aminos} size={160} lang={lang} />
+                          </div>
+                        </Collapsible>
+                      </div>
+                    )}
+                  </Collapsible>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {menuOpen && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(10,11,12,0.96)",
+            zIndex: 40,
+            display: "flex",
+            flexDirection: "column",
+            padding: 18,
+            overflowY: "auto",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>{t("Settings", "تنظیمات")}</div>
+            <button
+              onClick={() => setMenuOpen(false)}
+              aria-label={t("Close", "بستن")}
+              style={{ background: "transparent", border: "0.5px solid #3a3d3e", color: "#e8e6df", borderRadius: 8, width: 40, height: 40, fontSize: 16, cursor: "pointer" }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ width: "100%" }}>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 12.5, color: "#8a8f8f", marginBottom: 8 }}>🌐 {t("Language", "زبان")}</div>
+              <button
+                onClick={() => setLang((l) => (l === "en" ? "fa" : "en"))}
+                style={{ background: "transparent", border: "0.5px solid #3a3d3e", color: "#e8e6df", borderRadius: 10, padding: "11px 10px", fontSize: 14, cursor: "pointer", width: "100%", minHeight: 44 }}
+              >
+                {t("فارسی", "English")}
+              </button>
+            </div>
+
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 12.5, color: "#8a8f8f", marginBottom: 8 }}>⚖️ {t("Portion", "مقدار مصرف")}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {Object.entries(PORTION_MODES).map(([k, m]) => (
+                  <button
+                    key={k}
+                    onClick={() => setMode(k)}
+                    style={{
+                      flex: "1 1 auto",
+                      textAlign: "center",
+                      background: mode === k ? "#1c2b25" : "transparent",
+                      border: mode === k ? "0.5px solid #1d9e75" : "0.5px solid #2a2c2d",
+                      color: "#e8e6df",
+                      borderRadius: 10,
+                      padding: "11px 8px",
+                      fontSize: 12.5,
+                      cursor: "pointer",
+                      minHeight: 44,
+                    }}
+                  >
+                    {t(m.label, m.labelFa)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {mode === "50c" && (
+              <div style={{ fontSize: 11, color: "#797d7d", marginBottom: 18, lineHeight: 1.5 }}>
+                {t(
+                  "Standard GI test dose — GL always equals GI ÷ 2 at 50g carbs.",
+                  "دوز استاندارد آزمایش شاخص گلایسمی — بار گلایسمی همیشه برابر شاخص تقسیم بر ۲ است."
+                )}
+              </div>
+            )}
+
+            <div style={{ borderTop: "0.5px solid #2a2c2d", paddingTop: 14, marginBottom: 18 }}>
+              <div style={{ fontSize: 12.5, color: "#8a8f8f", marginBottom: 10 }}>🎨 {t("Pie color guide", "راهنمای رنگ نمودار دایره‌ای")}</div>
+              <ColorLegend lang={lang} />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "0.5px solid #2a2c2d", paddingTop: 14 }}>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  handleShare();
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: shareStatus === "copied" ? "#1c2b25" : "transparent",
+                  border: `0.5px solid ${shareStatus === "copied" ? "#1d9e75" : "#3a3d3e"}`,
+                  color: "#e8e6df",
+                  borderRadius: 10,
+                  padding: "12px 12px",
+                  fontSize: 14,
+                  cursor: "pointer",
+                  textAlign: lang === "fa" ? "right" : "left",
+                  minHeight: 44,
+                }}
+              >
+                🔗 {shareStatus === "copied" ? t("Copied!", "کپی شد!") : t("Share comparison", "اشتراک‌گذاری مقایسه")}
+              </button>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  startTour();
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "transparent",
+                  border: "0.5px solid #3a3d3e",
+                  color: "#e8e6df",
+                  borderRadius: 10,
+                  padding: "12px 12px",
+                  fontSize: 14,
+                  cursor: "pointer",
+                  textAlign: lang === "fa" ? "right" : "left",
+                  minHeight: 44,
+                }}
+              >
+                🧭 {t("Guide me", "راهنمای من")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {tourStep >= 0 && (() => {
+        const step = TOUR_STEPS[tourStep];
+        const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+        const vh = typeof window !== "undefined" ? window.innerHeight : 768;
+        const tipWidth = step.colorLegend ? 320 : 280;
+        let tipStyle;
+        if (tourRect) {
+          const spaceBelow = vh - (tourRect.top + tourRect.height);
+          const top = spaceBelow > 200 ? tourRect.top + tourRect.height + 14 : Math.max(12, tourRect.top - 190);
+          const left = Math.max(12, Math.min(tourRect.left, vw - tipWidth - 12));
+          tipStyle = { top, left };
+        } else {
+          tipStyle = { top: "40%", left: "50%", transform: "translate(-50%, -50%)" };
+        }
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 1000 }}>
+            {tourRect ? (
+              <div
+                style={{
+                  position: "fixed",
+                  top: tourRect.top - 6,
+                  left: tourRect.left - 6,
+                  width: tourRect.width + 12,
+                  height: tourRect.height + 12,
+                  borderRadius: 10,
+                  border: "2px solid #1d9e75",
+                  boxShadow: "0 0 0 9999px rgba(0,0,0,0.75)",
+                  pointerEvents: "none",
+                  transition: "top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease",
+                }}
+              />
+            ) : (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)" }} />
+            )}
+            <div
+              dir={lang === "fa" ? "rtl" : "ltr"}
+              style={{
+                position: "fixed",
+                ...tipStyle,
+                width: tipWidth,
+                background: "#16181a",
+                border: "0.5px solid #3a3d3e",
+                borderRadius: 12,
+                padding: 16,
+                fontFamily: "var(--font-sans)",
+                color: "#e8e6df",
+                boxShadow: "0 10px 24px rgba(0,0,0,0.5)",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#8a8f8f", marginBottom: 4 }}>
+                {tourStep + 1} / {TOUR_STEPS.length}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>{t(step.title.en, step.title.fa)}</div>
+              <div style={{ fontSize: 12.5, color: "#c7c5bc", lineHeight: 1.6, marginBottom: 14 }}>{t(step.text.en, step.text.fa)}</div>
+              {step.colorLegend && (
+                <div style={{ marginBottom: 14, padding: "10px 0", borderTop: "0.5px solid #2a2c2d", borderBottom: "0.5px solid #2a2c2d" }}>
+                  <ColorLegend lang={lang} compact />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <button
+                  onClick={() => setTourStep(-1)}
+                  style={{ background: "transparent", border: "none", color: "#8a8f8f", fontSize: 12, cursor: "pointer", padding: "6px 4px" }}
+                >
+                  {t("Skip", "رد شدن")}
+                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {tourStep > 0 && (
+                    <button
+                      onClick={() => setTourStep((s) => s - 1)}
+                      style={{ background: "transparent", border: "0.5px solid #3a3d3e", color: "#e8e6df", borderRadius: 8, padding: "6px 12px", fontSize: 12.5, cursor: "pointer" }}
+                    >
+                      {t("Back", "قبلی")}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => (tourStep === TOUR_STEPS.length - 1 ? setTourStep(-1) : setTourStep((s) => s + 1))}
+                    style={{ background: "#1c2b25", border: "0.5px solid #1d9e75", color: "#8fd9bb", borderRadius: 8, padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontWeight: 500 }}
+                  >
+                    {tourStep === TOUR_STEPS.length - 1 ? t("Done", "پایان") : t("Next", "بعدی")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+function Row({ label, value }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "3px 0" }}>
+      <span style={{ color: "#8a8f8f" }}>{label}</span>
+      <span style={{ fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+}
+
+function MicroRow({ label, value, unit, dvPct }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "3px 0" }}>
+      <span style={{ color: "#8a8f8f" }}>{label}</span>
+      <span style={{ fontWeight: 500 }}>
+        {round(value, value < 10 ? 1 : 0)} {unit}
+        <span style={{ color: "#6f7373", fontWeight: 400 }}> · {dvPct}% DV</span>
+      </span>
+    </div>
+  );
+}
+
+function Advice({ label, text }) {
+  return (
+    <div style={{ marginTop: 8, borderTop: "0.5px solid #2a2c2d", paddingTop: 8 }}>
+      <div style={{ fontSize: 10.5, letterSpacing: "0.04em", color: "#6f7373", textTransform: "uppercase", marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 12, color: "#c7c5bc", lineHeight: 1.6 }}>{text}</div>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<Compare />);
+</script>
+</body>
+</html>
